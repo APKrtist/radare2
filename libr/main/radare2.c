@@ -1312,7 +1312,20 @@ R_API int r_main_radare2(int argc, const char **argv) {
 				opt.ind++;
 				free (f);
 				while (opt.ind < argc) {
-					char *escaped_arg = r_str_arg_escape (argv[opt.ind]);
+					char *escaped_arg;
+					int i;
+					for (i = 0; argv[opt.ind][i] != '\0' && argv[opt.ind][i] != ' '; i++){}//i will be less then the len if there is a space
+					if(i != strlen(argv[opt.ind])){//if space add qoutes around
+						escaped_arg = malloc((strlen(argv[opt.ind])+3)*sizeof(char));
+						escaped_arg[0] = 39;
+						strncpy(escaped_arg+1, argv[opt.ind], strlen(argv[opt.ind]));
+						escaped_arg[strlen(argv[opt.ind])+1] = 39;
+						escaped_arg[strlen(argv[opt.ind])+2] = '\0';
+					}
+					else{//if not just copy
+						escaped_arg = malloc((strlen(argv[opt.ind])+1)*sizeof(char));
+						strncpy(escaped_arg, argv[opt.ind], strlen(argv[opt.ind])+1);
+					}
 					file = r_str_append (file, " ");
 					file = r_str_append (file, escaped_arg);
 					free (escaped_arg);
