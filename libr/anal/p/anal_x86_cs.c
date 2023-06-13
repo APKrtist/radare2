@@ -49,6 +49,7 @@ struct Getarg {
 	int bits;
 };
 
+// TODO: get rid of this unnecessary wrapper
 static void hidden_op(cs_insn *insn, cs_x86 *x, int mode) {
 	unsigned int id = insn->id;
 	int regsz = 4;
@@ -242,10 +243,16 @@ static char *getarg(struct Getarg* gop, int n, int set, char *setop, ut32 *bitsi
 	case X86_OP_INVALID:
 		return strdup ("invalid");
 	case X86_OP_REG:
-		if (set == 1) {
-			return r_str_newf ("%s,%s=", cs_reg_name (handle, op.reg), setarg);
+		{
+			const char *rn = cs_reg_name (handle, op.reg);
+			if (rn) {
+				if (set == 1) {
+					return r_str_newf ("%s,%s=", rn, setarg);
+				}
+				return strdup (rn);
+			}
+			return NULL;
 		}
-		return strdup (cs_reg_name (handle, op.reg));
 	case X86_OP_IMM:
 		if (set == 1) {
 			return r_str_newf ("%"PFMT64u",%s=[%d]", (ut64)op.imm, setarg, op.size);
@@ -351,7 +358,7 @@ static const char *reg32_to_name(ut8 reg) {
 	return reg < R_ARRAY_SIZE (names) ? names[reg] : "unk";
 }
 
-static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, csh *handle, cs_insn *insn) {
+static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, csh handle, cs_insn *insn) {
 	RAnalValue *val = NULL;
 	const int bits = a->config->bits;
 	int rs = bits / 8;
@@ -378,7 +385,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 		break;
 	}
 	struct Getarg gop = {
-		.handle = *handle,
+		.handle = handle,
 		.insn = insn,
 		.bits = bits
 	};
@@ -714,8 +721,8 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 	case X86_INS_MOVSW:
 		if (op->prefix & R_ANAL_OP_PREFIX_REP) {
 			int width = INSOP(0).size;
-			src = (char *)cs_reg_name(*handle, INSOP(1).mem.base);
-			dst = (char *)cs_reg_name(*handle, INSOP(0).mem.base);
+			src = (char *)cs_reg_name (handle, INSOP(1).mem.base);
+			dst = (char *)cs_reg_name (handle, INSOP(0).mem.base);
 			r_strbuf_appendf (&op->esil,
 					"%s,[%d],%s,=[%d],"\
 					"df,?{,%d,%s,-=,%d,%s,-=,},"\
@@ -725,8 +732,8 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 					width, src, width, dst);
 		} else {
 			int width = INSOP(0).size;
-			src = (char *)cs_reg_name(*handle, INSOP(1).mem.base);
-			dst = (char *)cs_reg_name(*handle, INSOP(0).mem.base);
+			src = (char *)cs_reg_name (handle, INSOP(1).mem.base);
+			dst = (char *)cs_reg_name (handle, INSOP(0).mem.base);
 			esilprintf (op, "%s,[%d],%s,=[%d],df,?{,%d,%s,-=,%d,%s,-=,},"\
 					"df,!,?{,%d,%s,+=,%d,%s,+=,}",
 					src, width, dst, width, width, src, width,
@@ -757,8 +764,8 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 		case X86_OP_MEM:
 			if (op->prefix & R_ANAL_OP_PREFIX_REP) {
 				int width = INSOP (0).size;
-				const char *src = cs_reg_name (*handle, INSOP (1).mem.base);
-				const char *dst = cs_reg_name (*handle, INSOP (0).mem.base);
+				const char *src = cs_reg_name (handle, INSOP (1).mem.base);
+				const char *dst = cs_reg_name (handle, INSOP (0).mem.base);
 				const char *counter = (bits == 16)?"cx": (bits==32)?"ecx":"rcx";
 				esilprintf (op, "%s,!,?{,BREAK,},%s,NUM,%s,NUM,"\
 						"%s,[%d],%s,=[%d],df,?{,%d,%s,-=,%d,%s,-=,},"\
@@ -782,7 +789,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 			}
 			if (INSOP(1).type == X86_OP_MEM) {
 				// MOV REG, [PTR + IREG*SCALE]
-				op->ireg = cs_reg_name (*handle, INSOP (1).mem.index);
+				op->ireg = cs_reg_name (handle, INSOP (1).mem.index);
 				op->disp = INSOP (1).mem.disp;
 				op->scale = INSOP (1).mem.scale;
 			}
@@ -974,6 +981,8 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 		dst, val,
 		src, dst,
 		bitsize - 1);
+		free (src);
+		free (dst);
 	   	}
 		break;
 	case X86_INS_SALC:
@@ -1014,6 +1023,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 				shft, bitsize, src, shft, dst_r, bitsize, dst_w, bitsize-1);
 			free (dst_r);
 			free (dst_w);
+			free (src);
 		}
 		break;
 	case X86_INS_PSLLDQ:
@@ -1095,8 +1105,8 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 					"%s,0x%"PFMT64x",-,!,%u,$o,^,of,:=,3,$b,af,:=",
 					src, dst, bitsize, bitsize - 1, src, (ut64)(1ULL << (bitsize - 1)), bitsize - 1);
 			} else {
-				char *rsrc = (char *)cs_reg_name(*handle, INSOP(1).mem.base);
-				char *rdst = (char *)cs_reg_name(*handle, INSOP(0).mem.base);
+				char *rsrc = (char *)cs_reg_name (handle, INSOP(1).mem.base);
+				char *rdst = (char *)cs_reg_name (handle, INSOP(0).mem.base);
 				const int width = INSOP(0).size;
 				esilprintf (op,
 					"%s,%s,==,$z,zf,:=,%u,$b,cf,:=,$p,pf,:=,%u,$s,sf,:=,%s,0x%"PFMT64x","\
@@ -1519,12 +1529,18 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 			}
 			break;
 		case X86_OP_REG:
+#if 0
 			{
-			src = getarg (&gop, 0, 0, NULL, NULL);
-			val = r_vector_push (&op->srcs, NULL);
-			val->reg = r_reg_get (a->reg, src, R_REG_TYPE_GPR);
-			free (src);
+				src = getarg (&gop, 0, 0, NULL, NULL);
+				val = r_vector_push (&op->srcs, NULL);
+				val->reg = r_reg_get (a->reg, src, R_REG_TYPE_GPR);
+				free (src);
 			}
+#else
+			val = r_vector_push (&op->srcs, NULL);
+			val->reg = cs_reg_name (handle, INSOP (0).reg);
+#endif
+			break;
 		//case X86_OP_FP:
 		default: // other?
 			break;
@@ -2375,16 +2391,7 @@ static void anop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len,
 	}
 }
 
-// R2_590 - return const char * to avoid derefs
-static RRegItem *cs_reg2reg(RReg *reg, csh *h, int id) {
-	if (id == X86_REG_INVALID) {
-		return NULL;
-	}
-	RRegItem *ri = r_reg_get (reg, (char *)cs_reg_name (*h, id), -1);
-	return ri;
-}
-
-static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, int mode) {
+static void set_access_info(RReg *reg, RAnalOp *op, csh handle, cs_insn *insn, int mode) {
 	int i;
 	int regsz;
 	x86_reg sp;
@@ -2416,7 +2423,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 	if (val) {
 		val->type = R_ANAL_VAL_REG;
 		val->access = R_PERM_W;
-		val->reg = cs_reg2reg (reg, handle, X86_REG_RIP);
+		val->reg = cs_reg_name (handle, X86_REG_RIP);
 		r_list_append (ret, val);
 	}
 
@@ -2424,13 +2431,13 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 	// Register access info
 	cs_regs regs_read, regs_write;
 	ut8 read_count, write_count;
-	if (cs_regs_access (*handle, insn, regs_read, &read_count, regs_write, &write_count) == 0) {
+	if (cs_regs_access (handle, insn, regs_read, &read_count, regs_write, &write_count) == 0) {
 		for (i = 0; i < read_count; i++) {
 			val = r_anal_value_new ();
 			if (val) {
 				val->type = R_ANAL_VAL_REG;
 				val->access = R_PERM_R;
-				val->reg = cs_reg2reg (reg, handle, regs_read[i]);
+				val->reg = cs_reg_name (handle, regs_read[i]);
 				r_list_append (ret, val);
 			}
 		}
@@ -2439,7 +2446,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 			if (val) {
 				val->type = R_ANAL_VAL_REG;
 				val->access = R_PERM_W;
-				val->reg = cs_reg2reg (reg, handle, regs_write[i]);
+				val->reg = cs_reg_name (handle, regs_write[i]);
 				r_list_append (ret, val);
 			}
 		}
@@ -2452,7 +2459,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -INSOP(0).size;
 			val->memref = INSOP(0).size;
 			r_list_append (ret, val);
@@ -2464,7 +2471,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -16;
 			val->memref = 16;
 			r_list_append (ret, val);
@@ -2476,7 +2483,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -32;
 			val->memref = 32;
 			r_list_append (ret, val);
@@ -2487,7 +2494,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -2;
 			val->memref = 2;
 			r_list_append (ret, val);
@@ -2498,7 +2505,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -4;
 			val->memref = 4;
 			r_list_append (ret, val);
@@ -2509,7 +2516,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -8;
 			val->memref = 8;
 			r_list_append (ret, val);
@@ -2521,7 +2528,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 		if (val) {
 			val->type = R_ANAL_VAL_MEM;
 			val->access = R_PERM_W;
-			val->reg = cs_reg2reg (reg, handle, sp);
+			val->reg = cs_reg_name (handle, sp);
 			val->delta = -regsz;
 			val->memref = regsz;
 			r_list_append (ret, val);
@@ -2559,12 +2566,9 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 					val->delta += insn->size;
 				}
 				val->memref = INSOP (i).size;
-				r_unref (val->seg);
-				val->seg = cs_reg2reg (reg, handle, INSOP (i).mem.segment);
-				r_unref (val->reg);
-				val->reg = cs_reg2reg (reg, handle, INSOP (i).mem.base);
-				r_unref (val->regdelta);
-				val->regdelta = cs_reg2reg (reg, handle, INSOP (i).mem.index);
+				val->reg = cs_reg_name (handle, INSOP (i).mem.base);
+				val->seg = cs_reg_name (handle, INSOP (i).mem.segment);
+				val->regdelta = cs_reg_name (handle, INSOP (i).mem.index);
 				r_list_append (ret, val);
 			}
 		}
@@ -2579,7 +2583,7 @@ static void set_access_info(RReg *reg, RAnalOp *op, csh *handle, cs_insn *insn, 
 	src2 = r_vector_push (&(op)->srcs, NULL); \
 	dst = r_vector_push (&(op)->dsts, NULL);
 
-static void set_src_dst(RReg *reg, RAnalValue *val, csh *handle, cs_insn *insn, int x) {
+static void set_src_dst(RReg *reg, RAnalValue *val, csh handle, cs_insn *insn, int x) {
 	if (!val) {
 		return;
 	}
@@ -2588,16 +2592,12 @@ static void set_src_dst(RReg *reg, RAnalValue *val, csh *handle, cs_insn *insn, 
 		val->mul = INSOP (x).mem.scale;
 		val->delta = INSOP (x).mem.disp;
 		val->memref = INSOP (x).size;
-		r_unref (val->seg);
-		val->seg = cs_reg2reg (reg, handle, INSOP (x).mem.segment);
-		r_unref (val->reg);
-		val->reg = cs_reg2reg (reg, handle, INSOP (x).mem.base);
-		r_unref (val->regdelta);
-		val->regdelta = cs_reg2reg (reg, handle, INSOP (x).mem.index);
+		val->seg = cs_reg_name (handle, INSOP (x).mem.segment);
+		val->reg = cs_reg_name (handle, INSOP (x).mem.base);
+		val->regdelta = cs_reg_name (handle, INSOP (x).mem.index);
 		break;
 	case X86_OP_REG:
-		r_unref (val->reg);
-		val->reg = cs_reg2reg (reg, handle, INSOP (x).reg);
+		val->reg = cs_reg_name (handle, INSOP (x).reg);
 		break;
 	case X86_OP_IMM:
 		val->imm = INSOP (x).imm;
@@ -2607,7 +2607,7 @@ static void set_src_dst(RReg *reg, RAnalValue *val, csh *handle, cs_insn *insn, 
 	}
 }
 
-static void op_fillval(RAnal *a, RAnalOp *op, csh *handle, cs_insn *insn, int mode) {
+static void op_fillval(RAnal *a, RAnalOp *op, csh handle, cs_insn *insn, int mode) {
 	RAnalValue *dst, *src0, *src1, *src2;
 	set_access_info (a->reg, op, handle, insn, mode);
 	switch (op->type & R_ANAL_OP_TYPE_MASK) {
@@ -3138,6 +3138,13 @@ static void anop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, csh 
 		op0_memimmhandle (op, insn, addr, regsz);
 		op1_memimmhandle (op, insn, addr, regsz);
 		}
+		break;
+	// comiss
+	case X86_INS_COMISS:
+	case X86_INS_UCOMISS:
+	case X86_INS_VCOMISS:
+	case X86_INS_VUCOMISS:
+		op->family = R_ANAL_OP_FAMILY_SIMD;
 		break;
 	case X86_INS_ROL:
 	case X86_INS_RCL:
@@ -3805,13 +3812,13 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, RAn
 		anop (a, op, addr, buf, len, &handle, insn);
 		set_opdir (op, insn);
 		if (mask & R_ARCH_OP_MASK_ESIL) {
-			anop_esil (a, op, addr, buf, len, &handle, insn);
+			anop_esil (a, op, addr, buf, len, handle, insn);
 		}
 		if (mask & R_ARCH_OP_MASK_OPEX) {
 			opex (a, &op->opex, insn, mode);
 		}
 		if (mask & R_ARCH_OP_MASK_VAL) {
-			op_fillval (a, op, &handle, insn, mode);
+			op_fillval (a, op, handle, insn, mode);
 		}
 	}
 //#if X86_GRP_PRIVILEGE>0

@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2022 - pancake, nibble, defragger, ret2libc */
+/* radare - LGPL - Copyright 2009-2023 - pancake, nibble, defragger, ret2libc */
 
 #include <r_anal.h>
 #include <r_cons.h>
@@ -100,7 +100,7 @@ static void setxref(HtUP *m, ut64 from, ut64 to, int type) {
 R_API bool r_anal_xrefs_set(RAnal *anal, ut64 from, ut64 to, const RAnalRefType _type) {
 	RAnalRefType type = _type;
 	r_return_val_if_fail (anal, false);
-	if (from == to) {
+	if (from == to || from == UT64_MAX || to == UT64_MAX) {
 		return false;
 	}
 	if (anal->iob.is_valid_offset) {
@@ -494,9 +494,7 @@ R_API RList *r_anal_function_get_xrefs(RAnalFunction *fcn) {
 	return fcn_get_refs (fcn, fcn->anal->dict_xrefs);
 }
 
-#if R2_590
 R_API RList *r_anal_function_get_all_xrefs(RAnalFunction *fcn) {
 	r_return_val_if_fail (fcn, NULL);
 	return fcn_get_all_refs (fcn, fcn->anal->dict_xrefs);
 }
-#endif

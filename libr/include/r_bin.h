@@ -229,24 +229,14 @@ typedef struct r_bin_info_t {
 	char *default_cc;
 	RList/*<RBinFileHash>*/ *file_hashes;
 	int bits;
-#if R2_590
+	int has_retguard; // can be -1 , 0 and 1
 	bool has_va;
 	bool has_pi; // pic/pie
 	bool has_canary;
-	int has_retguard; // can be -1 , 0 and 1
 	bool has_sanitizers;
 	bool has_crypto;
 	bool has_nx;
 	bool has_libinjprot; // binary allows libraries to be injected
-#else
-	int has_va;
-	int has_pi; // pic/pie
-	int has_canary;
-	int has_retguard;
-	int has_sanitizers;
-	int has_crypto;
-	int has_nx;
-#endif
 	int big_endian;
 	bool has_lit;
 	char *actual_checksum;
@@ -485,7 +475,7 @@ typedef struct r_bin_plugin_t {
 	int (*demangle_type)(const char *str);
 	struct r_bin_dbginfo_t *dbginfo;
 	struct r_bin_write_t *write;
-	int (*get_offset)(RBinFile *bf, int type, int idx);
+	ut64 (*get_offset) (RBinFile *bf, int type, int idx);
 	const char* (*get_name)(RBinFile *bf, int type, int idx, bool simplified);
 	ut64 (*get_vaddr)(RBinFile *bf, ut64 baddr, ut64 paddr, ut64 vaddr);
 	RBuffer* (*create)(RBin *bin, const ut8 *code, int codelen, const ut8 *data, int datalen, RBinArchOptions *opt);
@@ -645,7 +635,7 @@ typedef struct r_bin_map_t {
 } RBinMap;
 
 typedef struct r_bin_dbginfo_t {
-	bool (*get_line)(RBinFile *arch, ut64 addr, char *file, int len, int *line);
+	bool (*get_line)(RBinFile *arch, ut64 addr, char *file, int len, int *line, int *column);
 } RBinDbgInfo;
 
 typedef struct r_bin_write_t {
@@ -822,8 +812,8 @@ R_API const char *r_bin_get_meth_flag_string(ut64 flag, bool compact);
 R_API RBinSection *r_bin_get_section_at(RBinObject *o, ut64 off, int va);
 
 /* dbginfo.c */
-R_API bool r_bin_addr2line(RBin *bin, ut64 addr, char *file, int len, int *line);
-R_API bool r_bin_addr2line2(RBin *bin, ut64 addr, char *file, int len, int *line);
+R_API bool r_bin_addr2line(RBin *bin, ut64 addr, char *file, int len, int *line, int *column);
+R_API bool r_bin_addr2line2(RBin *bin, ut64 addr, char *file, int len, int *line, int *column);
 R_API char *r_bin_addr2text(RBin *bin, ut64 addr, int origin);
 R_API char *r_bin_addr2fileline(RBin *bin, ut64 addr);
 /* bin_write.c */

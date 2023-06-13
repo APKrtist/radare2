@@ -31,14 +31,14 @@ R_API RArch *r_arch_new(void) {
 static ut32 _rate_compat(RArchPlugin *p, RArchConfig *cfg, const char *name) {
 	ut32 bits = cfg->bits;
 	ut32 score = 0;
-	if (name && !strcmp (p->name, name)) {
+	if (name && !strcmp (p->meta.name, name)) {
 		score += 100;
 	}
 	if (cfg->arch && !strcmp (p->arch, cfg->arch)) {
 		score += 50;
 	}
 	if (score > 0) {
-		if (strstr (p->name, ".nz")) {
+		if (strstr (p->meta.name, ".nz")) {
 			score += 50;
 		}
 		if (R_SYS_BITS_CHECK (p->bits, bits)) {
@@ -97,7 +97,6 @@ R_API bool r_arch_use(RArch *arch, RArchConfig *config, const char *name) {
 	if (arch->session) {
 		RArchPluginEncodeCallback encode = arch->session->plugin->encode;
 		if (!encode) {
-#if R2_590
 			RArchPlugin *ap = find_bestmatch (arch, config, name, true);
 			if (ap) {
 				RArchSession *es = r_arch_session (arch, config, ap);
@@ -107,7 +106,6 @@ R_API bool r_arch_use(RArch *arch, RArchConfig *config, const char *name) {
 					arch->session->encoder = es;
 				}
 			}
-#endif
 		}
 	}
 #if 0
@@ -205,7 +203,7 @@ R_API bool r_arch_set_arch(RArch *arch, char *archname) {
 
 R_API bool r_arch_add(RArch *a, RArchPlugin *ap) {
 	r_return_val_if_fail (a && ap, false);
-	if (!ap->name || !ap->arch) {
+	if (!ap->meta.name || !ap->arch) {
 		return false;
 	}
 	return r_list_append (a->plugins, ap) != NULL;
@@ -242,12 +240,10 @@ R_API int r_arch_info(RArch *a, int query) {
 R_API bool r_arch_encode(RArch *a, RAnalOp *op, RArchEncodeMask mask) {
 	RArchSession *session = a->session;
 	RArchPluginEncodeCallback encode = R_UNWRAP3 (session, plugin, encode);
-#if R2_590
 	if (!encode && session->encoder) {
 		session = session->encoder;
 		encode = R_UNWRAP3 (session, plugin, encode);
 	}
-#endif
 	return encode? encode (session, op, mask): false;
 }
 

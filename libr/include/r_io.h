@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2017-2022 - condret, pancake */
+/* radare2 - LGPL - Copyright 2017-2023 - condret, pancake */
 
 #ifndef R2_IO_H
 #define R2_IO_H
@@ -7,12 +7,7 @@
 #include <r_util.h>
 #include <r_socket.h>
 #include <r_vector.h>
-#include "r_skyline.h"
 #include <r_util/r_w32dw.h>
-
-#ifndef USE_NEW_IO_CACHE_API
-#define	USE_NEW_IO_CACHE_API	0
-#endif
 
 #define R_IO_SEEK_SET 0
 #define R_IO_SEEK_CUR 1
@@ -107,13 +102,11 @@ typedef struct r_io_undo_w_t {
 	size_t len;  /* length */
 } RIOUndoWrite;
 
-#if USE_NEW_IO_CACHE_API
 typedef struct r_io_cache_t {
 	RPVector *vec;
 	RRBTree *tree;
 	RRBComparator ci_cmp_cb;
 } RIOCache;
-#endif
 
 typedef struct r_io_t {
 	struct r_io_desc_t *desc; // XXX deprecate... we should use only the fd integer, not hold a weak pointer
@@ -133,12 +126,7 @@ typedef struct r_io_t {
 	RIDStorage *files; // RIODescs accessible by their fd
 	RIDStorage *maps;  // RIOMaps accessible by their id
 	RIDStorage *banks; // RIOBanks accessible by their id
-#if USE_NEW_IO_CACHE_API
 	RIOCache *cache;
-#else
-	RPVector cache;
-	RSkyline cache_skyline;
-#endif
 	ut8 *write_mask;
 	int write_mask_len;
 	ut64 mask;
@@ -256,7 +244,6 @@ typedef struct r_io_bank_t {
 	bool drain_me;	// speedup r_io_nread_at
 } RIOBank;
 
-#if USE_NEW_IO_CACHE_API
 typedef struct io_cache_item_t {
 	RInterval *tree_itv;
 	RInterval itv;
@@ -264,15 +251,6 @@ typedef struct io_cache_item_t {
 	ut8 *odata;	//is this a good idea?
 	bool written;
 } RIOCacheItem;
-#else
-
-typedef struct r_io_cache_t {
-	RInterval itv;
-	ut8 *data;
-	ut8 *odata;
-	int written;
-} RIOCache;
-#endif
 
 #define R_IO_DESC_CACHE_SIZE (sizeof (ut64) * 8)
 typedef struct r_io_desc_cache_t {
@@ -507,8 +485,9 @@ R_API RIODesc *r_io_desc_get_prev(RIO *io, RIODesc *desc);
 R_API RIODesc *r_io_desc_get_highest(RIO *io);
 R_API RIODesc *r_io_desc_get_lowest(RIO *io);
 R_API ut64 r_io_desc_seek(RIODesc *desc, ut64 offset, int whence);
-R_API bool r_io_desc_resize(RIODesc *desc, ut64 newsize);
 R_API ut64 r_io_desc_size(RIODesc *desc);
+R_API bool r_io_desc_resize(RIODesc *desc, ut64 newsize);
+R_API char *r_io_desc_system(RIODesc *desc, const char *cmd);
 R_API bool r_io_desc_is_blockdevice(RIODesc *desc);
 R_API bool r_io_desc_is_chardevice(RIODesc *desc);
 R_API bool r_io_desc_exchange(RIO *io, int fd, int fdx);
@@ -531,12 +510,10 @@ R_API void r_io_cache_init(RIO *io);
 R_API void r_io_cache_fini(RIO *io);
 R_API bool r_io_cache_list(RIO *io, int rad);
 R_API void r_io_cache_reset(RIO *io, int set);
-#if USE_NEW_IO_CACHE_API
 R_API bool r_io_cache_write_at(RIO *io, ut64 addr, const ut8 *buf, int len);
 R_API bool r_io_cache_read_at(RIO *io, ut64 addr, ut8 *buf, int len);
 R_API RIOCache *r_io_cache_clone(RIO *io);
 R_API void r_io_cache_replace(RIO *io, RIOCache *cache);
-#endif
 R_API bool r_io_cache_write(RIO *io, ut64 addr, const ut8 *buf, int len);
 R_API bool r_io_cache_read(RIO *io, ut64 addr, ut8 *buf, int len);
 
@@ -560,6 +537,7 @@ R_API int r_io_fd_write(RIO *io, int fd, const ut8 *buf, int len);
 R_API ut64 r_io_fd_seek(RIO *io, int fd, ut64 addr, int whence);
 R_API ut64 r_io_fd_size(RIO *io, int fd);
 R_API bool r_io_fd_resize(RIO *io, int fd, ut64 newsize);
+R_API char *r_io_fd_system(RIO *io, int fd, const char *cmd);
 R_API bool r_io_fd_is_blockdevice(RIO *io, int fd);
 R_API bool r_io_fd_is_chardevice(RIO *io, int fd);
 R_API int r_io_fd_read_at(RIO *io, int fd, ut64 addr, ut8 *buf, int len);

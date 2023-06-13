@@ -1379,12 +1379,12 @@ static char *core_anal_graph_label(RCore *core, RAnalBlock *bb, int opts) {
 	int is_html = r_cons_context ()->is_html;
 	int is_json = opts & R_CORE_ANAL_JSON;
 	char cmd[1024], file[1024], *cmdstr = NULL, *filestr = NULL, *str = NULL;
-	int line = 0, oline = 0, idx = 0;
+	int line = 0, oline = 0, colu = 0, idx = 0;
 	ut64 at;
 
 	if (opts & R_CORE_ANAL_GRAPHLINES) {
 		for (at = bb->addr; at < bb->addr + bb->size; at += 2) {
-			r_bin_addr2line (core->bin, at, file, sizeof (file) - 1, &line);
+			r_bin_addr2line (core->bin, at, file, sizeof (file) - 1, &line, &colu);
 			if (line != 0 && line != oline && strcmp (file, "??")) {
 				filestr = r_file_slurp_line (file, line, 0);
 				if (filestr) {
@@ -1499,7 +1499,7 @@ static int core_anal_graph_construct_edges(RCore *core, RAnalFunction *fcn, int 
 				}
 			}
 		}
-		if (bbi->fail != -1) {
+		if (bbi->fail != UT64_MAX) {
 			nodes++;
 			if (is_html) {
 				r_cons_printf ("<div class=\"connector _0x%08"PFMT64x" _0x%08"PFMT64x"\">\n"
@@ -2238,6 +2238,9 @@ R_API void r_core_anal_datarefs(RCore *core, ut64 addr) {
 		RAnalRef *ref;
 		RList *refs = r_anal_function_get_refs (fcn);
 		r_list_foreach (refs, iter, ref) {
+			if (ref->addr == UT64_MAX) {
+				continue;
+			}
 			RBinObject *obj = r_bin_cur_object (core->bin);
 			RBinSection *binsec = r_bin_get_section_at (obj, ref->addr, true);
 			if (binsec && binsec->is_data) {
@@ -2267,6 +2270,9 @@ R_API void r_core_anal_coderefs(RCore *core, ut64 addr) {
 		RList *refs = r_anal_function_get_refs (fcn);
 		r_cons_printf ("agn %s\n", me);
 		r_list_foreach (refs, iter, ref) {
+			if (ref->addr == UT64_MAX) {
+				continue;
+			}
 			r_strf_buffer (32);
 			RFlagItem *item = r_flag_get_i (core->flags, ref->addr);
 			const char *dst = item? item->name: r_strf ("0x%08"PFMT64x, ref->addr);
@@ -2280,6 +2286,9 @@ R_API void r_core_anal_coderefs(RCore *core, ut64 addr) {
 }
 
 static void add_single_addr_xrefs(RCore *core, ut64 addr, RGraph *graph) {
+	if (addr == UT64_MAX) {
+		return;
+	}
 	r_return_if_fail (graph);
 	RFlagItem *f = r_flag_get_at (core->flags, addr, false);
 	char *me = (f && f->offset == addr)
@@ -2295,6 +2304,9 @@ static void add_single_addr_xrefs(RCore *core, ut64 addr, RGraph *graph) {
 	RAnalRef *ref;
 	RList *list = r_anal_xrefs_get (core->anal, addr);
 	r_list_foreach (list, iter, ref) {
+		if (ref->addr == UT64_MAX) {
+			continue;
+		}
 		RFlagItem *item = r_flag_get_i (core->flags, ref->addr);
 		char *src = item? r_str_new (item->name): r_str_newf ("0x%08" PFMT64x, ref->addr);
 		RGraphNode *reference_from = r_graph_add_node_info (graph, src, NULL, ref->addr);
@@ -3835,8 +3847,8 @@ R_API int r_core_anal_graph(RCore *core, ut64 addr, int opts) {
 		if (!is_html && !is_json && !is_keva) {
 			RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, addr, 0);
 			if (is_star) {
-					char *name = get_title(fcn ? fcn->addr: addr);
-					r_cons_printf ("agn %s;", name);
+				char *name = get_title (fcn ? fcn->addr: addr);
+				r_cons_printf ("agn %s;", name);
 			} else {
 				r_cons_printf ("\t\"0x%08"PFMT64x"\";\n", fcn? fcn->addr: addr);
 			}
@@ -4813,8 +4825,9 @@ bool fcn_merge_touch_cb(ut64 addr, struct r_merge_ctx_t *ctx) {
 	}
 
 	// Add it to the touch list
-	if (found)
+	if (found) {
 		r_list_append(&ctx->touch, bb);
+	}
 
 	return true;
 }
@@ -4918,13 +4931,11 @@ static const char *reg_name_for_access(RAnalOp* op, RAnalVarAccessType type) {
 	RAnalValue *dst = r_vector_at (&op->dsts, 0);
 	RAnalValue *src = r_vector_at (&op->srcs, 0);
 	if (type == R_ANAL_VAR_ACCESS_TYPE_WRITE) {
-		if (dst && dst->reg) {
-			return dst->reg->name;
+		if (dst) {
+			return dst->reg;
 		}
-	} else {
-		if (src && src->reg) {
-			return src->reg->name;
-		}
+	} else if (src) {
+		return src->reg;
 	}
 	return NULL;
 }
@@ -5662,13 +5673,13 @@ R_API void r_core_anal_esil(RCore *core, const char *str /* len */, const char *
 				ut64 dst = ESIL->cur;
 				RAnalValue *opsrc0 = r_vector_at (&op.srcs, 0);
 				RAnalValue *opsrc1 = r_vector_at (&op.srcs, 1);
-				if (!opsrc0 || !opsrc0->reg || !opsrc0->reg->name) {
+				if (!opsrc0 || !opsrc0->reg) {
 					break;
 				}
-				if (!strcmp (opsrc0->reg->name, "sp")) {
+				if (!strcmp (opsrc0->reg, "sp")) {
 					break;
 				}
-				if (!strcmp (opsrc0->reg->name, "zero")) {
+				if (!strcmp (opsrc0->reg, "zero")) {
 					break;
 				}
 				if ((target && dst == ntarget) || !target) {
@@ -5820,7 +5831,7 @@ static bool isValidAddress(RCore *core, ut64 addr) {
 		return false;
 	}
 	// check if current map->fd is null://
-	if (!strncmp (desc->name, "null://", 7)) {
+	if (r_str_startswith (desc->name, "null://")) {
 		return false;
 	}
 	return true;
@@ -6011,11 +6022,10 @@ static bool printAnalPaths(RCoreAnalPaths *p, PJ *pj) {
 			r_cons_printf (" 0x%08"PFMT64x, path->addr);
 		}
 	}
-
 	if (pj) {
 		pj_end (pj);
 	} else {
-		r_cons_printf ("\n");
+		r_cons_newline ();
 	}
 	return (p->count < 1 || --p->count > 0);
 }

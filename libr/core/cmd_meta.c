@@ -3,6 +3,8 @@
 #include <r_core.h>
 #include <sdb/sdb.h>
 
+// R2R db/cmd/cmd_meta
+
 char *getcommapath(RCore *core);
 
 static R_TH_LOCAL ut64 filter_offset = UT64_MAX;
@@ -165,7 +167,7 @@ static bool print_meta_offset(RCore *core, ut64 addr, PJ *pj) {
 	int line, line_old, i;
 	char file[1024];
 	int colu = 0; /// addr2line function cant retrieve column info
-	int ret = r_bin_addr2line (core->bin, addr, file, sizeof (file) - 1, &line);
+	int ret = r_bin_addr2line (core->bin, addr, file, sizeof (file) - 1, &line, &colu);
 	if (ret) {
 		if (pj) {
 			pj_o (pj);
@@ -749,17 +751,21 @@ typedef struct {
 	RCore *core;
 	ut64 addr;
 	ut8 *buf;
+	int bufsz;
 } StringSearchOptions;
 
 static int cb_strhit(R_NULLABLE RSearchKeyword *kw, void *user, ut64 where) {
 	StringSearchOptions *sso = (StringSearchOptions*)user;
-#if 1
-	const char *name = (const char *)(sso->buf + (where - sso->addr));
-	size_t n = strlen (name) + 1;
-	r_meta_set (sso->core->anal, R_META_TYPE_STRING, where, n, name);
-#else
-	r_core_cmdf (sso->core, "Cz@0x%08"PFMT64x, where);
-#endif
+	if (where - sso->addr >= sso->bufsz) {
+		r_core_cmdf (sso->core, "Cz@0x%08"PFMT64x, where);
+	} else {
+		const char *name = (const char *)(sso->buf + (where - sso->addr));
+		size_t maxlen = sso->bufsz - (where - sso->addr);
+		char *hname = r_str_ndup (name, maxlen);
+		size_t n = strlen (hname) + 1;
+		r_meta_set (sso->core->anal, R_META_TYPE_STRING, where, n, hname);
+		free (hname);
+	}
 	return true;
 }
 
@@ -912,19 +918,16 @@ static int cmd_meta_others(RCore *core, const char *input) {
 			} else if (range > 32 * 1024 * 1024) {
 				R_LOG_ERROR ("Range is too large");
 			} else {
-				ut8 *buf = malloc (range);
+				ut8 *buf = malloc (range + 1);
 				if (buf) {
+					buf[range] = 0;
 					const ut64 addr = core->offset;
 					int minstr = 3;
 					int maxstr = r_config_get_i (core->config, "bin.str.max");
 					if (maxstr < 1) {
 						maxstr = 128;
 					}
-#if 1
-					// if (!*buf) {
-						r_core_cmdf (core, "Cz@0x%08"PFMT64x, addr);
-					// }
-#endif
+					r_core_cmdf (core, "Cz@0x%08"PFMT64x, addr);
 					// maps are not yet set
 					char *s = r_core_cmd_str (core, "o;om");
 					free (s);
@@ -936,7 +939,8 @@ static int cmd_meta_others(RCore *core, const char *input) {
 					StringSearchOptions sso = {
 						.addr = addr,
 						.core = core,
-						.buf = buf
+						.buf = buf,
+						.bufsz = range
 					};
 					// r_print_hexdump (core->print, addr, buf, range, 8,1,1);
 					r_search_set_callback (ss, cb_strhit, &sso);

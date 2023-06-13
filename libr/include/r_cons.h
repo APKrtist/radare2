@@ -151,9 +151,7 @@ typedef struct r_cons_palette_t {
 	RColor call;
 	RColor cjmp;
 	RColor cmp;
-#if R2_590
 	RColor hint;
-#endif
 	RColor comment;
 	RColor usercomment;
 	RColor creg;
@@ -446,8 +444,16 @@ typedef struct {
 	int y;
 } RConsCursorPos;
 
+// TODO: Support binary, use RBuffer
+typedef struct input_state_t {
+	char *readbuffer;
+	int readbuffer_length;
+	bool bufactive;
+} InputState;
+
 typedef struct r_cons_t {
 	RConsContext *context;
+	InputState input_state;
 	char *lastline;
 	int lines;
 	int rows;
@@ -789,6 +795,7 @@ R_API RCons *r_cons_singleton(void);
 R_API const RConsTheme *r_cons_themes(void);
 R_API void r_cons_chop(void);
 R_API RConsContext *r_cons_context(void);
+R_API InputState *r_cons_input_state(void);
 R_API RCons *r_cons_free(void);
 R_API char *r_cons_lastline(int *size);
 R_API char *r_cons_lastline_utf8_ansi_len(int *len);
@@ -899,6 +906,7 @@ R_API void r_cons_newline(void);
 R_API void r_cons_filter(void);
 R_API void r_cons_flush(void);
 R_API char *r_cons_drain(void);
+R_API void r_cons_print_at(char *s, int x, int y, int w, int h);
 R_API void r_cons_print_fps(int col);
 R_API void r_cons_last(void);
 R_API int r_cons_less_str(const char *str, const char *exitkeys);
@@ -917,6 +925,7 @@ R_API void r_cons_log_stub(const char *output, const char *funcname, const char 
 
 
 /* input */
+
 R_API int r_cons_controlz(int ch);
 R_API int r_cons_readchar(void);
 R_API bool r_cons_readpush(const char *str, int len);
@@ -954,7 +963,6 @@ R_API void r_cons_rainbow_new(RConsContext *ctx, int sz);
 
 R_API int r_cons_fgets(char *buf, int len, int argc, const char **argv);
 R_API char *r_cons_hud(RList *list, const char *prompt);
-R_API char *r_cons_hud_line(RList *list, const char *prompt);
 R_API char *r_cons_hud_line_string(const char *s);
 R_API char *r_cons_hud_path(const char *path, int dir);
 R_API char *r_cons_hud_string(const char *s);
@@ -1108,9 +1116,7 @@ struct r_line_t {
 	RLineHud *hud;
 	RList *sdbshell_hist;
 	RListIter *sdbshell_hist_iter;
-#if R2_590
 	int maxlength;
-#endif
 	int vtmode; // implemented but unused from the global RCons.vtmode
 	int hist_size;
 }; /* RLine */

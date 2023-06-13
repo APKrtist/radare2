@@ -45,8 +45,8 @@ R_API int r_anal_opasm(RAnal *anal, ut64 addr, const char *s, ut8 *outbuf, int o
 			return -1;
 		}
 		if (!encode) {
-			oldname = strdup (as->plugin->name);
-			const char *arch_name = as->plugin->name;
+			oldname = strdup (as->plugin->meta.name);
+			const char *arch_name = as->plugin->meta.name;
 			const char *dot = strchr (arch_name, '.');
 			if (dot) {
 				char *an = r_str_ndup (arch_name, dot - arch_name);
@@ -599,6 +599,7 @@ R_API const char *r_anal_op_family_tostring(int n) {
 	case R_ANAL_OP_FAMILY_CRYPTO: return "crpt";
 	case R_ANAL_OP_FAMILY_IO: return "io";
 	case R_ANAL_OP_FAMILY_VIRT: return "virt";
+	case R_ANAL_OP_FAMILY_SIMD: return "simd";
 	}
 	return NULL;
 }
@@ -618,6 +619,7 @@ static const struct op_family of[] = {
 	{ "io", R_ANAL_OP_FAMILY_IO },
 	{ "sec", R_ANAL_OP_FAMILY_SECURITY },
 	{ "thread", R_ANAL_OP_FAMILY_THREAD },
+	{ "simd", R_ANAL_OP_FAMILY_SIMD },
 };
 
 R_API int r_anal_op_family_from_string(const char *f) {
@@ -678,7 +680,7 @@ R_API int r_anal_op_reg_delta(RAnal *anal, ut64 addr, const char *name) {
 	RAnalValue *dst = NULL;
 	if (r_anal_op (anal, &op, addr, buf, sizeof (buf), R_ARCH_OP_MASK_ALL) > 0) {
 		dst = r_vector_at (&op.dsts, 0);
-		if (dst && dst->reg && dst->reg->name && (!name || !strcmp (dst->reg->name, name))) {
+		if (dst && dst->reg && (!name || !strcmp (dst->reg, name))) {
 			if (r_vector_length (&op.srcs) > 0) {
 				r_anal_op_fini (&op);
 				return ((RAnalValue*)r_vector_at (&op.srcs, 0))->delta;

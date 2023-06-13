@@ -1,7 +1,6 @@
 /* radare2 - LGPL - Copyright 2015-2023 - mrmacete, pancake */
 
 #include <r_arch.h>
-#include <r_esil.h>
 #include <r_anal/op.h>
 #include "bpf.h"
 
@@ -542,7 +541,7 @@ static bool parse_j (RBpfSockFilter *f, const char *m, int opc, const bpf_token 
 	return false;
 }
 
-static bool parse_alu (RBpfSockFilter *f, const char *m, int opc, const bpf_token *op) {
+static bool parse_alu(RBpfSockFilter *f, const char *m, int opc, const bpf_token *op) {
 	if (TOKEN_EQ (m, "add")) {
 		f->code = BPF_ALU_ADD;
 		PARSE_NEED (opc == 1);
@@ -741,11 +740,6 @@ static bool encode(RArchSession *s, RAnalOp *op, ut32 mask) {
 // (k) >= 0 must also be true, but the value is already unsigned
 #define INSIDE_M(k) ((k) < 16)
 
-/*
-static bool bpf_int_exit(REsil *esil, ut32 interrupt, void *user);
-REsilInterruptHandler ih = { 0, NULL, NULL, &bpf_int_exit, NULL };
-*/
-
 #if 0
 static const char *M[] = {
 	"m[0]",
@@ -783,11 +777,7 @@ static bool decode(RArchSession *a, RAnalOp *op, RArchDecodeMask mask) {
 	if (mask & R_ARCH_OP_MASK_DISASM) {
 		(void)disassemble (op, data, len);
 	}
-#if R2_590
-	ut64 gp = a->config->gp // r_reg_getv (r, "gp");
-#else
-	ut64 gp = 0; // XXX
-#endif
+	ut64 gp = a->config->gp; // r_reg_getv (r, "gp");
 
 	switch (f->code) {
 	case BPF_RET | BPF_A:
@@ -1171,38 +1161,7 @@ static char *regs(RArchSession *as) {
 	return strdup (p);
 }
 
-/*
-static bool bpf_int_exit(REsil *esil, ut32 interrupt, void *user) {
-	int syscall;
-	ut64 r0;
-	if (!esil || (interrupt != 0x0))
-		return false;
-	r_esil_reg_read (esil, "R0", &r0, NULL);
-	if (r0 == 0) {
-		esil->anal->cb_printf ("; BPF result: DROP value: %d\n", (int)r0);
-		eprintf ("BPF result: DROP value: %d\n", (int)r0);
-	} else {
-		esil->anal->cb_printf ("; BPF result: ACCEPT value: %d\n", (int)r0);
-		eprintf ("BPF result: ACCEPT value: %d\n", (int)r0);
-	}
-	return true;
-}
-
-static int esil_bpf_init(REsil *esil) {
-	if (!esil) {
-		return false;
-	}
-	REsilInterrupt *intr = r_esil_interrupt_new (esil, 0, &ih);
-	r_esil_set_interrupt (esil, intr);
-	return true;
-}
-
-static int esil_bpf_fini(REsil *esil) {
-	return true;
-}
-*/
-
-static int archinfo(RArchSession *anal, ut32 q) {
+static int archinfo(RArchSession *as, ut32 q) {
 	switch (q) {
 	case R_ANAL_ARCHINFO_MIN_OP_SIZE:
 		return 8;
@@ -1218,20 +1177,52 @@ static int archinfo(RArchSession *anal, ut32 q) {
 	return 0;
 }
 
+static bool bpf_int_exit(REsil *esil, ut32 interrupt, void *user) {
+	ut64 r0;
+	if (!esil || (interrupt != 0x0)) {
+		return false;
+	}
+	r_esil_reg_read (esil, "R0", &r0, NULL);
+	if (r0 == 0) {
+		R_LOG_INFO ("BPF result: DROP value: %d", (int)r0);
+	} else {
+		R_LOG_INFO ("BPF result: ACCEPT value: %d", (int)r0);
+	}
+	return true;
+}
+
+static bool esilcb(RArchSession *as, RArchEsilAction action) {
+	REsil *esil = as->arch->esil;
+	if (!esil) {
+		return false;
+	}
+	const int syscall_number = 0;
+	switch (action) {
+	case R_ARCH_ESIL_INIT:
+		r_esil_set_interrupt (esil, syscall_number, &bpf_int_exit, as);
+		break;
+	case R_ARCH_ESIL_FINI:
+		r_esil_del_interrupt (esil, 0);
+		break;
+	default:
+		return false;
+	}
+	return true;
+}
+
 RArchPlugin r_arch_plugin_bpf = {
-	.name = "bpf.mr",
-	.desc = "Classic BPF analysis plugin",
-	.license = "LGPLv3",
+	.meta = {
+		.name = "bpf.mr",
+		.desc = "Classic BPF analysis plugin",
+		.license = "LGPLv3",
+	},
 	.arch = "bpf",
 	.bits = 32,
 	.info = archinfo,
 	.encode = encode,
 	.decode = decode,
 	.regs = &regs,
-	/*
-		.esil_init = &esil_bpf_init,
-		.esil_fini = &esil_bpf_fini
-	*/
+	.esilcb = &esilcb,
 };
 
 #ifndef R2_PLUGIN_INCORE

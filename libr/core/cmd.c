@@ -464,6 +464,13 @@ static void recursive_help(RCore *core, int detail, const char *cmd_prefix) {
 	}
 
 	char *s = r_core_cmd_strf (core, "%s?", cmd_prefix);
+	if (!s) {
+		return;
+	}
+	if (!*s) {
+		free (s);
+		return;
+	}
 	RList *pending = r_list_newf (free);
 	r_cons_print (s);
 	RList *rows = r_str_split_list (s, "\n", 0);
@@ -1495,28 +1502,16 @@ R_API bool r_core_run_script(RCore *core, const char *file) {
 					const char *bin;
 					char *bin_path;
 					int i;
-#if !R2_590
-					bool found = false;
-#endif
 					for (i = 0; python_bins[i]; i++) {
 						bin = python_bins[i];
 						bin_path = r_file_path (bin);
-#if R2_590
 						if (bin_path) {
-#else
-						if (strcmp (bin_path, bin)) {
-							found = true;
-#endif
 							break;
 						}
 						free (bin_path);
 					}
 
-#if R2_590
 					if (bin_path) {
-#else
-					if (found) {
-#endif
 #if R2__WINDOWS__
 						char *cmd = r_str_newf ("%s %s", bin_path, file);
 #else
@@ -4416,9 +4411,7 @@ next2:
 				// Color disabled when doing backticks ?e `pi 1`
 				int ocolor = r_config_get_i (core->config, "scr.color");
 				r_config_set_i (core->config, "scr.color", 0);
-				core->cmd_in_backticks = true;
 				str = r_core_cmd_str (core, ptr + 1);
-				core->cmd_in_backticks = false;
 				r_config_set_i (core->config, "scr.color", ocolor);
 			}
 			if (!str) {
@@ -6235,8 +6228,7 @@ R_API char *r_core_cmd_strf(RCore *core, const char *fmt, ...) {
 }
 
 #if R2_590
-// R_API
-int r_core_cmd_call_at(RCore *core, const char *cmd, ut64 addr) {
+R_API int r_core_cmd_call_at(RCore *core, const char *cmd, ut64 addr) {
 	ut64 oaddr = core->offset;
 	if (addr != core->offset) {
 		r_core_seek (core, addr, 1);

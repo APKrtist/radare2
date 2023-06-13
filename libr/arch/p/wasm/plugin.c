@@ -27,20 +27,14 @@ typedef struct wasm_cf_info {
 static inline ut64 get_func_offset(RArch *a, ut32 id, bool start) {
 	if (a && a->binb.get_offset && a->binb.bin) {
 		int type = start? 'F': 'e'; // find start or end
-		int ret = a->binb.get_offset (a->binb.bin, type, id);
-		if (ret >= 0) {
-			return ret;
-		}
+		return a->binb.get_offset (a->binb.bin, type, id);
 	}
 	return UT64_MAX;
 }
 
 static inline ut64 func_off_from_idx(RArch *a, ut32 id) {
 	if (a && a->binb.get_offset && a->binb.bin) {
-		int ret = a->binb.get_offset (a->binb.bin, 'f', id);
-		if (ret >= 0) {
-			return ret;
-		}
+		return a->binb.get_offset (a->binb.bin, 'f', id);
 	}
 	return UT64_MAX;
 }
@@ -648,9 +642,11 @@ static bool cache_clean(RArchSession *s) {
 }
 
 RArchPlugin r_arch_plugin_wasm = {
-	.name = "wasm",
-	.desc = "WebAssembly analysis plugin",
-	.license = "LGPL3",
+	.meta = {
+		.name = "wasm",
+		.desc = "WebAssembly analysis plugin",
+		.license = "LGPL3",
+	},
 	.arch = "wasm",
 	.bits = R_SYS_BITS_PACK1 (64),
 	.regs = wasm_regs,

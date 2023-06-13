@@ -29,6 +29,7 @@ static const char *helpmsg =
 	" -q                be quiet\n"
 	" -r [cmd ...args]  run shell command with R2PM_BINDIR in PATH\n"
 	" -s [<keyword>]    search available packages in database matching a string\n"
+	" -t [YYYY-MM-DD]   force a moment in time to pull the code from the git packages\n"
 	" -u <pkgname>      r2pm -u baleful (See -f to force uninstall)\n"
 	" -uci <pkgname>    uninstall + clean + install\n"
 	" -ui <pkgname>     uninstall + install\n"
@@ -54,6 +55,8 @@ typedef struct r_r2pm_t {
 	bool info;
 	bool install;
 	bool uninstall;
+	int rc;
+	const char *time;
 } R2Pm;
 
 static int git_pull(const char *dir, bool reset) {
@@ -73,7 +76,7 @@ static int git_pull(const char *dir, bool reset) {
 #if R2__WINDOWS__
 	char *s = r_str_newf ("cd %s && git pull && git diff", dir);
 #else
-	char *s = r_str_newf ("cd %s && git pull && git diff | cat", dir);
+	char *s = r_str_newf ("cd '%s' && git pull && git diff | cat", dir);
 #endif
 	int rc = r_sandbox_system (s, 1);
 	free (s);
@@ -86,12 +89,7 @@ static int git_clone(const char *dir, const char *url) {
 		return -1;
 	}
 	char *git = r_file_path ("git");
-#if R2_590
 	if (!git) {
-#else
-	if (!strcmp (git, "git")) {
-		free (git);
-#endif
 		R_LOG_ERROR ("Cannot find `git` in $PATH");
 		return 1;
 	}
@@ -104,26 +102,11 @@ static int git_clone(const char *dir, const char *url) {
 	return rc;
 }
 
-static bool r2pm_actionword(R2Pm *r2pm, const char *action) {
-	if (!strcmp (action, "init") || !strcmp (action, "update")) {
-		R_LOG_WARN ("Action words will be deprecated in r2-5.9.x, use -U instead of %s", action);
-		r2pm->init = true;
-	} else if (!strcmp (action, "help")) {
-		R_LOG_WARN ("Action words will be deprecated in r2-5.9.x, use -h instead of %s", action);
-		r2pm->help = true;
-	} else if (!strcmp (action, "info")) {
-		R_LOG_WARN ("Action words will be deprecated in r2-5.9.x, use -I instead of %s", action);
-		r2pm->info = true;
-	} else {
-		return false;
-	}
-	return true;
-}
-
 static bool r2pm_add(R2Pm *r2pm, const char *repository) {
 	R_LOG_INFO ("r2pm.add is not implemented");
 	return false;
 }
+
 static char *r2pm_bindir(void) {
 	return r_xdg_datadir ("prefix/bin");
 }
@@ -339,11 +322,7 @@ static int r2pm_update(bool force) {
 
 static void r2pm_setenv(void) {
 	char *gmake = r_file_path ("gmake");
-#if R2_590
 	if (gmake) {
-#else
-	if (strcmp (gmake, "gmake")) {
-#endif
 		r_sys_setenv ("MAKE", gmake);
 	} else {
 		r_sys_setenv ("MAKE", "make");
@@ -431,10 +410,6 @@ static void r2pm_setenv(void) {
 	char *bin_path = NULL;
 	int i;
 	char *env_python = r_sys_getenv ("PYTHON");
-#if !R2_590
-	bool found = false;
-#endif
-
 	if (R_STR_ISNOTEMPTY (env_python)) {
 		free (env_python);
 		return;
@@ -443,22 +418,12 @@ static void r2pm_setenv(void) {
 	for (i = 0; python_bins[i]; i++) {
 		bin = python_bins[i];
 		bin_path = r_file_path (bin);
-
-#if R2_590
 		if (bin_path) {
-#else
-		if (strcmp (bin_path, bin)) {
-			found = true;
-#endif
 			break;
 		}
 	}
 
-#if R2_590
 	if (bin_path) {
-#else
-	if (found) {
-#endif
 		r_sys_setenv ("PYTHON", bin_path);
 	}
 	free (bin_path);
@@ -557,32 +522,17 @@ static bool download(const char *url, const char *outfile) {
 	char *tool = r_file_path ("curl");
 	int res = 1;
 	R_LOG_INFO ("download: %s into %s", url, outfile);
-#if R2_590
 	if (tool) {
-#else
-	if (strcmp (tool, "curl")) {
-#endif
 		res = r_sys_cmdf ("%s -sfL -o '%s' '%s'", tool, outfile, url);
 		free (tool);
 		return res == 0;
 	}
-
-#if !R2_590
-	free (tool);
-#endif
 	tool = r_file_path ("wget");
-#if R2_590
 	if (tool) {
-#else
-	if (strcmp (tool, "wget")) {
-#endif
 		res = r_sys_cmdf ("%s -qO '%s' '%s'", tool, outfile, url);
 		free (tool);
 		return res == 0;
 	}
-#if !R2_590
-	free (tool);
-#endif
 	R_LOG_ERROR ("Please install `curl` or `wget`");
 	return false;
 }
@@ -606,8 +556,9 @@ static int r2pm_clone(const char *pkg) {
 	if (offline) {
 		return 0;
 	}
+	bool git_source = false;
 	if (r_file_is_directory (srcdir)) {
-		git_pull (srcdir, 0);
+		git_source = git_pull (srcdir, 0);
 	} else {
 		char *url_list = r2pm_get (pkg, "\nR2PM_GIT ", TT_TEXTLINE_LIST);
 		if (url_list) {
@@ -619,6 +570,7 @@ static int r2pm_clone(const char *pkg) {
 					break;
 				}
 			}
+			git_source = true;
 			r_str_argv_free (urls);
 			free (url_list);
 		} else {
@@ -648,17 +600,26 @@ static int r2pm_clone(const char *pkg) {
 			return 1;
 		}
 	}
+	char *r2pm_time = r_sys_getenv ("R2PM_TIME");
+	if (r2pm_time) {
+		if (git_source) {
+			char *srcdir = r2pm_gitdir ();
+			R_LOG_INFO ("Going back to %s", r2pm_time);
+			r_sys_cmdf ("cd %s/%s && git reset --hard && git pull && git checkout @{%s}",
+				srcdir, pkg, r2pm_time);
+			free (srcdir);
+		} else {
+			R_LOG_WARN ("Cannot go back in time with tarball packages");
+		}
+		free (r2pm_time);
+	}
 	free (srcdir);
 	return 0;
 }
 
 static bool r2pm_check(const char *program) {
 	char *s = r_file_path (program);
-#if R2_590
-	bool found = (bool)s;
-#else
-	bool found = strcmp (s, program);
-#endif
+	bool found = s != NULL;
 	free (s);
 	return found;
 }
@@ -1000,6 +961,7 @@ static void r2pm_envhelp(bool verbose) {
 		printf ("R2_LOG_LEVEL=2         # define log.level for r2pm\n"
 			"SUDO=sudo              # path to the SUDO executable\n"
 			"MAKE=make              # path to the GNU MAKE executable\n"
+			"R2PM_TIME=YYYY-MM-DD\n"
 			"R2PM_PLUGDIR=%s\n"
 			"R2PM_PREFIX=%s\n"
 			"R2PM_BINDIR=%s\n"
@@ -1020,13 +982,14 @@ static void r2pm_envhelp(bool verbose) {
 		free (r2pm_gitdir);
 	} else {
 		r_cons_printf ("R2_LOG_LEVEL\n"
-			       "R2PM_PLUGDIR\n"
-			       "R2PM_BINDIR\n"
-			       "R2PM_OFFLINE\n"
-			       "R2PM_PREFIX\n"
-			       "R2PM_LEGACY\n"
-			       "R2PM_DBDIR\n"
-			       "R2PM_GITDIR\n");
+			"R2PM_TIME\n"
+			"R2PM_PLUGDIR\n"
+			"R2PM_BINDIR\n"
+			"R2PM_OFFLINE\n"
+			"R2PM_PREFIX\n"
+			"R2PM_LEGACY\n"
+			"R2PM_DBDIR\n"
+			"R2PM_GITDIR\n");
 		r_cons_flush ();
 	}
 }
@@ -1073,56 +1036,67 @@ R_API int r_main_r2pm(int argc, const char **argv) {
 		0
 	};
 	RGetopt opt;
-	r_getopt_init (&opt, argc, argv, "aqecdiIhH:flgrpsuUv");
-	if (opt.ind < argc) {
-		// TODO: fully deprecate during the 5.9.x cycle
-		r2pm_actionword (&r2pm, argv[opt.ind]);
-	}
+	r_getopt_init (&opt, argc, argv, "aqecdiIhH:flgrpst:uUv");
 	int i, c;
 	r2pm_setenv ();
+	bool action = false;
 	while ((c = r_getopt_next (&opt)) != -1) {
 		switch (c) {
 		case 'a':
 			r2pm.add = true;
+			action = true;
 			break;
 		case 'q':
 			r2pm.quiet = true;
 			break;
 		case 'c':
 			r2pm.clean = true;
+			action = true;
 			break;
 		case 'i':
 			r2pm.install = true;
+			action = true;
 			break;
 		case 'd':
 			r2pm.doc = true;
+			action = true;
 			break;
 		case 'p':
 			r2pm.plugdir = true;
 			break;
 		case 'I':
 			r2pm.info = true;
+			action = true;
 			break;
 		case 'u':
 			r2pm.uninstall = true;
+			action = true;
 			break;
 		case 'e':
 			r2pm.edit = true;
+			action = true;
 			break;
 		case 'f':
 			r2pm.force = true;
 			break;
 		case 'U':
 			r2pm.init = true;
+			action = true;
 			break;
 		case 'l':
 			r2pm.list = true;
+			action = true;
 			break;
 		case 's':
 			r2pm.search = true;
+			action = true;
+			break;
+		case 't':
+			r2pm.time = opt.arg;
 			break;
 		case 'r':
 			r2pm.run = true;
+			action = true;
 			break;
 		case 'g':
 			r2pm.global = true;
@@ -1140,11 +1114,23 @@ R_API int r_main_r2pm(int argc, const char **argv) {
 			} else {
 				r2pm.help = true;
 			}
+			action = true;
 			break;
 		case 'v':
 			r2pm.version = true;
+			action = true;
 			break;
 		}
+	}
+	if (!action && opt.ind < argc) {
+		r2pm.help = true;
+		r2pm.rc = 1;
+	}
+	if (r2pm.time) {
+		// set R2PM_TIME env var
+		r_sys_setenv ("R2PM_TIME", r2pm.time);
+	} else {
+		// honor env var if any?
 	}
 	if (r2pm.plugdir) {
 		if (r2pm.clean) {
@@ -1173,7 +1159,7 @@ R_API int r_main_r2pm(int argc, const char **argv) {
 		if (r2pm.envhelp) {
 			r2pm_envhelp (true);
 		}
-		return 0;
+		return r2pm.rc;
 	}
 	if (r2pm.init) {
 		r2pm_update (r2pm.force);
@@ -1191,7 +1177,7 @@ R_API int r_main_r2pm(int argc, const char **argv) {
 	}
 	if (r2pm.add) {
 		if (opt.ind == argc) {
-			printf ("https://github.com/radareorg/radare2-pm\n");
+			printf (R2PM_GITURL "\n");
 		} else {
 			for (i = opt.ind; i < argc; i++) {
 				r2pm_add (&r2pm, argv[i]);

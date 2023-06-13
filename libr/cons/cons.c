@@ -17,12 +17,28 @@ static R_TH_LOCAL RStrBuf *echodata = NULL; // TODO: move into RConsInstance? ma
 #define I (r_cons_instance)
 #define C (getctx())
 
+static inline void cons_input_state_init(InputState *state) {
+	state->readbuffer = NULL;
+	state->readbuffer_length = 0;
+	state->bufactive = true;
+}
+
 static RConsContext *getctx(void) {
-	if (!r_cons_instance) {
+	if (R_UNLIKELY (!r_cons_instance)) {
 		r_cons_instance = &g_cons_instance;
 		r_cons_instance->context = &r_cons_context_default;
+		cons_input_state_init (&r_cons_instance->input_state);
 	}
 	return r_cons_instance->context;
+}
+
+R_API InputState *r_cons_input_state(void) {
+	if (R_UNLIKELY (!r_cons_instance)) {
+		r_cons_instance = &g_cons_instance;
+		r_cons_instance->context = &r_cons_context_default;
+		cons_input_state_init (&r_cons_instance->input_state);
+	}
+	return &r_cons_instance->input_state;
 }
 
 R_API bool r_cons_is_initialized(void) {
@@ -655,6 +671,7 @@ R_API RCons *r_cons_new(void) {
 
 	r_cons_context_reset ();
 	cons_context_init (C, NULL);
+	cons_input_state_init (&I->input_state);
 
 	r_cons_get_size (&I->pagesize);
 	I->num = NULL;
@@ -1183,6 +1200,44 @@ R_API void r_cons_visual_flush(void) {
 	r_cons_reset ();
 	if (I->fps) {
 		r_cons_print_fps (0);
+	}
+}
+
+R_API void r_cons_print_at(char *s, int x, int y, int w, int h) {
+	if (w < 0) {
+		w = 0;
+	}
+	if (h < 0) {
+		h = 0;
+	}
+	while (s) {
+		int pos = 0;
+		int ochar = s[pos];
+		char *n = strchr (s, '\n');
+		if (n) {
+			*n = 0;
+			if (w && r_str_ansi_len (s) > w) {
+				const char *p = r_str_ansi_chrn (s, w);
+				if (p) {
+					pos = p - s;
+					ochar = s[pos];
+					s[pos] = 0;
+				}
+			}
+		}
+		r_cons_gotoxy (x, y);
+		r_cons_printf ("%s", s);
+		if (n) {
+			s[pos] = ochar;
+			*n = '\n';
+			s = n + 1;
+		} else {
+			break;
+		}
+		if (h && y > h) {
+			break;
+		}
+		y++;
 	}
 }
 

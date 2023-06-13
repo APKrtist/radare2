@@ -164,7 +164,7 @@ bool ranal2_list(RCore *core, const char *arch, int fmt) {
 			RArch *ai = core->anal->arch;
 			RArchPlugin *arp;
 			r_list_foreach (ai->plugins, iter, arp) {
-				if (arp->cpus && !strcmp (arch, arp->name)) {
+				if (arp->cpus && !strcmp (arch, arp->meta.name)) {
 					char *c = strdup (arp->cpus);
 					int n = r_str_split (c, ',');
 					for (i = 0; i < n; i++) {
@@ -329,15 +329,6 @@ static bool cb_anal_nonull(void *user, void *data) {
 	return true;
 }
 
-static bool cb_analstrings(void *user, void *data) {
-	RCore *core = (RCore*) user;
-	RConfigNode *node = (RConfigNode*) data;
-	if (node->i_value) {
-		r_config_set_b (core->config, "bin.strings", false);
-	}
-	return true;
-}
-
 static bool cb_anal_ignbithints(void *user, void *data) {
 	RCore *core = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
@@ -394,13 +385,13 @@ static void update_analarch_options(RCore *core, RConfigNode *node) {
 }
 
 static void update_archarch_options(RCore *core, RConfigNode *node) {
-	RArchPlugin *h;
+	RArchPlugin *ap;
 	RListIter *it;
 	if (core && core->anal && core->anal->arch && node) {
 		r_config_node_purge_options (node);
-		r_list_foreach (core->anal->arch->plugins, it, h) {
-			if (h->name) {
-				SETOPTIONS (node, h->name, NULL);
+		r_list_foreach (core->anal->arch->plugins, it, ap) {
+			if (ap->meta.name) {
+				SETOPTIONS (node, ap->meta.name, NULL);
 			}
 		}
 	}
@@ -443,10 +434,10 @@ static void update_archdecoder_options(RCore *core, RConfigNode *node) {
 	r_return_if_fail (core && core->anal && core->anal->arch && node);
 	r_config_node_purge_options (node);
 	RListIter *it;
-	RArchPlugin *p;
-	r_list_foreach (core->anal->arch->plugins, it, p) {
-		if (p->name) {
-			SETOPTIONS (node, p->name, NULL);
+	RArchPlugin *ap;
+	r_list_foreach (core->anal->arch->plugins, it, ap) {
+		if (ap->meta.name) {
+			SETOPTIONS (node, ap->meta.name, NULL);
 		}
 	}
 }
@@ -696,7 +687,7 @@ static void update_asmcpu_options(RCore *core, RConfigNode *node) {
 	r_config_node_purge_options (node);
 	RArchPlugin *h;
 	r_list_foreach (core->anal->arch->plugins, iter, h) {
-		if (h->cpus && !strcmp (arch, h->name)) {
+		if (h->cpus && !strcmp (arch, h->meta.name)) {
 			char *c = strdup (h->cpus);
 			int i, n = r_str_split (c, ',');
 			for (i = 0; i < n; i++) {
@@ -739,8 +730,8 @@ static void update_asmarch_options(RCore *core, RConfigNode *node) {
 	if (core && node && core->rasm) {
 		r_config_node_purge_options (node);
 		r_list_foreach (core->anal->arch->plugins, iter, h) {
-			if (h->name) {
-				SETOPTIONS (node, h->name, NULL);
+			if (h->meta.name) {
+				SETOPTIONS (node, h->meta.name, NULL);
 			}
 		}
 	}
@@ -1068,10 +1059,6 @@ static bool cb_jsonencoding_numbers(void *user, void *data) {
 		}
 		return false;
 	}
-	return true;
-}
-
-static bool cb_asm_armimm(void *user, void *data) {	//TODO: Remove this for 5.8.
 	return true;
 }
 
@@ -2579,11 +2566,7 @@ static bool cb_scrstrconv(void *user, void *data) {
 		}
 		return false;
 	} else {
-#if R2_590
 		free (core->print->strconv_mode);
-#else
-		free ((char *)core->print->strconv_mode);
-#endif
 		core->print->strconv_mode = strdup (node->value);
 	}
 	return true;
@@ -3305,6 +3288,15 @@ static bool cb_malloc(void *user, void *data) {
 
 static bool cb_log_config_level(void *coreptr, void *nodeptr) {
 	RConfigNode *node = (RConfigNode *)nodeptr;
+	if (!strcmp (node->value, "?")) {
+		r_cons_printf ("0 - fatal\n");
+		r_cons_printf ("1 - error\n");
+		r_cons_printf ("2 - info\n");
+		r_cons_printf ("3 - warn\n");
+		r_cons_printf ("4 - todo\n");
+		r_cons_printf ("5 - debug\n");
+		return false;
+	}
 	r_log_set_level (node->i_value);
 	return true;
 }
@@ -3378,11 +3370,7 @@ static bool cb_dbg_verbose(void *user, void *data) {
 static bool cb_prjvctype(void *user, void *data) {
 	RConfigNode *node = data;
 	char *git = r_file_path ("git");
-#if R2_590
-	bool have_git = (bool)git;
-#else
-	bool have_git = strcmp (git, "git");
-#endif
+	bool have_git = git != NULL;
 	free (git);
 	if (*node->value == '?') {
 		if (have_git) {
@@ -3501,7 +3489,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETBPREF ("anal.hasnext", "false", "continue analysis after each function");
 	SETICB ("anal.nonull", 0, &cb_anal_nonull, "do not analyze regions of N null bytes");
 	SETBPREF ("anal.esil", "false", "use the new ESIL code analysis");
-	SETCB ("anal.strings", "false", &cb_analstrings, "identify and register strings during analysis (aar only)");
+	SETBPREF ("anal.strings", "false", "flag strings when performing analysis (see af,aar, e bin.strings)");
 	SETPREF ("anal.types.spec", "gcc",  "set profile for specifying format chars used in type analysis");
 	SETBPREF ("anal.types.verbose", "false", "verbose output from type analysis");
 	SETBPREF ("anal.types.constraint", "false", "enable constraint types analysis for variables");
@@ -3639,7 +3627,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETI ("asm.hint.pos", 1, "shortcut hint position (-1, 0, 1)");
 	SETBPREF ("asm.slow", "true", "perform slow analysis operations in disasm");
 	SETBPREF ("asm.decode", "false", "use code analysis as a disassembler");
-	SETICB ("asm.imm.arm", false,  &cb_asm_armimm, "DEPRECATED, has no effect");	//TODO: Remove this for 5.8.
 	SETBPREF ("asm.imm.str", "true", "show immediates values as strings");
 	SETBPREF ("asm.imm.trim", "false", "remove all offsets and constants from disassembly");
 	SETBPREF ("asm.indent", "false", "indent disassembly based on reflines depth");
@@ -4095,21 +4082,13 @@ R_API int r_core_config_init(RCore *core) {
 		 * standard locations */
 		for (i = 0; bin_data[i]; i += 3) {
 			const char *bin_name = bin_data[i];
-			const char *standard_path = bin_data[i+1];
-			const char *browser_override = bin_data[i+2];
+			const char *standard_path = bin_data[i + 1];
+			const char *browser_override = bin_data[i + 2];
 			const char *path;
 
 			/* Try to find bin in path */
 			char *bin_path = r_file_path (bin_name);
 			path = bin_path;
-
-#if !R2_590
-			/* Not in path, old API returns strdup (arg) */
-			if (!strcmp (bin_name, bin_path)) {
-				R_FREE (bin_path);
-				path = NULL;
-			}
-#endif
 
 			/* Not in path, but expected location exists */
 			if (!path && r_file_exists (standard_path)) {
@@ -4260,7 +4239,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETBPREF ("scr.wheel", "true", "mouse wheel in Visual; temporaryly disable/reenable by right click/Enter)");
 	SETBPREF ("scr.cursor", "false", "keyboard controlled cursor in visual and panels");
 	SETPREF ("scr.layout", "", "name of the selected panels layout to load as default");
-	// DEPRECATED: USES hex.cols now SETI ("scr.colpos", 80, "Column position of cmd.cprompt in visual");
 	SETCB ("scr.breakword", "", &cb_scrbreakword, "emulate console break (^C) when a word is printed (useful for pD)");
 	SETCB ("scr.breaklines", "false", &cb_breaklines, "break lines in Visual instead of truncating them");
 	SETCB ("scr.gadgets", "true", &cb_scr_gadgets, "run pg in prompt, visual and panels");

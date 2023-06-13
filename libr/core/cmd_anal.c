@@ -427,7 +427,6 @@ static RCoreHelpMessage help_detail_ae = {
 	"$ds", "", "internal flag: delay-slot",
 	"$jt", "", "internal flag: jump-target",
 	"$js", "", "internal flag: jump-target-set",
-	// DEPRECATED "$r", "", "internal flag: jump-sign",
 	"$$", "", "internal flag: pc address",
 	NULL
 };
@@ -3185,16 +3184,15 @@ static bool anal_fcn_list_bb(RCore *core, const char *input, bool one) {
 			}
 		}
 		switch (mode) {
-		case 't':
+		case 't': // "afbt"
 			r_table_add_rowf (t, "xdxx", b->addr, b->size, b->jump, b->fail);
 			break;
-		case 'r':
-			if (b->jump == UT64_MAX) {
+		case 'r': // "afbr"
+			if (b->jump == UT64_MAX || r_anal_noreturn_at_addr (core->anal, b->jump)) {
 				ut64 retaddr = r_anal_bb_opaddr_i (b, b->ninstr - 1);
 				if (retaddr == UT64_MAX) {
 					break;
 				}
-
 				if (!strcmp (input, "*")) {
 					r_cons_printf ("db 0x%08"PFMT64x"\n", retaddr);
 				} else if (!strcmp (input, "-*")) {
@@ -3208,13 +3206,13 @@ static bool anal_fcn_list_bb(RCore *core, const char *input, bool one) {
 			r_cons_printf ("f bb.%05" PFMT64x " = 0x%08" PFMT64x "\n",
 				b->addr & 0xFFFFF, b->addr);
 			break;
-		case 'q':
+		case 'q': // "afbq"
 			r_cons_printf ("0x%08" PFMT64x "\n", b->addr);
 			break;
-		case 'j':
+		case 'j': // "afbj"
 			print_bb (pj, b, fcn, addr);
 			break;
-		case 'i':
+		case 'i': // "afbi"
 			if (*input == 'j') { // "afbij"
 				pj = r_core_pj_new (core);
 				if (!pj) {
@@ -8509,7 +8507,7 @@ static void cmd_anal_aftertraps(RCore *core, const char *input) {
 	RAnalOp op = {0};
 	ut64 addr, addr_end;
 	ut64 len = r_num_math (core->num, input);
-	if (len > 0xffffff) {
+	if (len > ALLOC_SIZE_LIMIT) {
 		R_LOG_ERROR ("Length is too large");
 		return;
 	}
@@ -10130,11 +10128,7 @@ static char *getViewerPath(void) {
 	};
 	for (i = 0; viewers[i]; i++) {
 		char *viewerPath = r_file_path (viewers[i]);
-#if R2_590
 		if (viewerPath) {
-#else
-		if (strcmp (viewerPath, viewers[i])) {
-#endif
 			return viewerPath;
 		}
 		free (viewerPath);
@@ -10143,14 +10137,8 @@ static char *getViewerPath(void) {
 }
 
 static char *dot_executable_path(void) {
-	const char *dot = "dot";
-	char *dotPath = r_file_path (dot);
-#if R2_590
+	char *dotPath = r_file_path ("dot");
 	if (!dotPath) {
-#else
-	if (!strcmp (dotPath, dot)) {
-		free (dotPath);
-#endif
 		dotPath = r_file_path ("xdot");
 	}
 	return dotPath;

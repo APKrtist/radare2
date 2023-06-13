@@ -1,7 +1,6 @@
 /* radare - LGPL - Copyright 2009-2023 - pancake */
 
 #include <r_core.h>
-#include <r_util/r_base36.h>
 #include <limits.h>
 
 #define R_CORE_MAX_DISASM (1024 * 1024 * 8)
@@ -2991,7 +2990,6 @@ static void printraw(RCore *core, int len, int mode) {
 	if (restore_obsz) {
 		(void) r_core_block_size (core, obsz);
 	}
-	core->cons->newline = core->cmd_in_backticks ? false : true;
 }
 
 static void _handle_call(RCore *core, char *line, char **str) {

@@ -27,6 +27,15 @@ typedef struct {
 	const char *optword;
 } RCoreVisualTypes;
 
+static int copyuntilch(char *dst, char *src, int ch) {
+	size_t i;
+	for (i = 0; src[i] && src[i] != ch; i++) {
+		dst[i] = src[i];
+	}
+	dst[i] = '\0';
+	return i;
+}
+
 // TODO: move this helper into r_cons
 static char *prompt(const char *str, const char *txt) {
 	char cmd[1024];
@@ -2041,6 +2050,7 @@ R_API int r_core_visual_view_rop(RCore *core) {
 }
 
 R_API int r_core_visual_trackflags(RCore *core) {
+	RCoreVisual *v = &core->visual;
 	const char *fs = NULL, *fs2 = NULL;
 	int hit, i, j, ch;
 	int _option = 0;
@@ -2099,9 +2109,9 @@ R_API int r_core_visual_trackflags(RCore *core) {
 				r_cons_printf ("\n Selected: %s\n\n", fs2);
 				// Honor MAX_FORMATS here
 				switch (format) {
-				case 0: snprintf (cmd, sizeof (cmd), "px %d @ %s!64", rows*16, fs2); core->printidx = 0; break;
-				case 1: snprintf (cmd, sizeof (cmd), "pd %d @ %s!64", rows, fs2); core->printidx = 1; break;
-				case 2: snprintf (cmd, sizeof (cmd), "ps @ %s!64", fs2); core->printidx = 5; break;
+				case 0: snprintf (cmd, sizeof (cmd), "px %d @ %s!64", rows*16, fs2); v->printidx = 0; break;
+				case 1: snprintf (cmd, sizeof (cmd), "pd %d @ %s!64", rows, fs2); v->printidx = 1; break;
+				case 2: snprintf (cmd, sizeof (cmd), "ps @ %s!64", fs2); v->printidx = 5; break;
 				case 3: strcpy (cmd, "f="); break;
 				default: format = 0; continue;
 				}
@@ -2338,6 +2348,7 @@ R_API int r_core_visual_trackflags(RCore *core) {
 }
 
 R_API int r_core_visual_comments(RCore *core) {
+	RCoreVisual *v = &core->visual;
 	char *str;
 	char cmd[512], *p = NULL;
 	int ch, option = 0;
@@ -2377,9 +2388,9 @@ R_API int r_core_visual_comments(RCore *core) {
 		r_cons_newline ();
 
 		switch (format) {
-		case 0: snprintf (cmd, sizeof (cmd), "px @ 0x%"PFMT64x":64", from); core->printidx = 0; break;
-		case 1: snprintf (cmd, sizeof (cmd), "pd 12 @ 0x%"PFMT64x":64", from); core->printidx = 1; break;
-		case 2: snprintf (cmd, sizeof (cmd), "ps @ 0x%"PFMT64x":64", from); core->printidx = 5; break;
+		case 0: snprintf (cmd, sizeof (cmd), "px @ 0x%"PFMT64x":64", from); v->printidx = 0; break;
+		case 1: snprintf (cmd, sizeof (cmd), "pd 12 @ 0x%"PFMT64x":64", from); v->printidx = 1; break;
+		case 2: snprintf (cmd, sizeof (cmd), "ps @ 0x%"PFMT64x":64", from); v->printidx = 5; break;
 		default: format = 0; continue;
 		}
 		if (*cmd) {
@@ -2529,45 +2540,6 @@ static void show_config_options(RCore *core, const char *opt) {
 	}
 }
 
-// R2_590 - move to rcons
-static void r_cons_print_at(char *s, int x, int y, int w, int h) {
-	if (w < 0) {
-		w = 0;
-	}
-	if (h < 0) {
-		h = 0;
-	}
-	while (s) {
-		int pos = 0;
-		int ochar = s[pos];
-		char *n = strchr (s, '\n');
-		if (n) {
-			*n = 0;
-			if (w && r_str_ansi_len (s) > w) {
-				const char *p = r_str_ansi_chrn (s, w);
-				if (p) {
-					pos = p - s;
-					ochar = s[pos];
-					s[pos] = 0;
-				}
-			}
-		}
-		r_cons_gotoxy (x, y);
-		r_cons_printf ("%s", s);
-		if (n) {
-			s[pos] = ochar;
-			*n = '\n';
-			s = n + 1;
-		} else {
-			break;
-		}
-		if (h && y > h) {
-			break;
-		}
-		y++;
-	}
-}
-
 R_API void r_core_visual_config(RCore *core) {
 	char *fs = NULL, *fs2 = NULL, *desc = NULL;
 	int i, j, ch, hit, show;
@@ -2598,10 +2570,10 @@ R_API void r_core_visual_config(RCore *core) {
 					fs = bt->name;
 				}
 				if (!old[0]) {
-					r_str_ccpy (old, bt->name, '.');
+					copyuntilch (old, bt->name, '.');
 					show = 1;
 				} else if (r_str_ccmp (old, bt->name, '.')) {
-					r_str_ccpy (old, bt->name, '.');
+					copyuntilch (old, bt->name, '.');
 					show = 1;
 				} else {
 					show = 0;
@@ -4053,6 +4025,7 @@ static void handleHints(RCore *core) {
 }
 
 R_API void r_core_visual_define(RCore *core, const char *args, int distance) {
+	RCoreVisual *v = &core->visual;
 	int plen = core->blocksize;
 	ut64 off = core->offset;
 	int i, h = 0, n, ch, ntotal = 0;
@@ -4255,7 +4228,7 @@ onemoretime:
 		RAnalOp op;
 		char *q = NULL;
 		ut64 tgt_addr = UT64_MAX;
-		if (!isDisasmPrint (core->printidx)) {
+		if (!isDisasmPrint (v->printidx)) {
 			break;
 		}
 		// TODO: get the aligned instruction even if the cursor is in the middle of it.

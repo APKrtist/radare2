@@ -60,61 +60,6 @@ static void pair_ut64(PJ *pj, const char *key, ut64 val) {
 	}
 }
 
-#if !R2_590
-// filter out shell special chars
-static char *r_name_filter_shell(const char *s) {
-	r_return_val_if_fail (s, NULL);
-	char *a = malloc (strlen (s) + 1);
-	if (!a) {
-		return NULL;
-	}
-	char *b = a;
-	while (*s) {
-		switch (*s) {
-		case '@':
-		case '`':
-		case '|':
-		case ';':
-		case '=':
-		case '\n':
-			break;
-		default:
-			*b++ = *s;
-			break;
-		}
-		s++;
-	}
-	*b = 0;
-	return a;
-}
-
-static char *r_name_filter_quoted_shell(const char *s) {
-	r_return_val_if_fail (s, NULL);
-	char *a = malloc (strlen (s) + 1);
-	if (!a) {
-		return NULL;
-	}
-	char *b = a;
-	while (*s) {
-		switch (*s) {
-		case ' ':
-		case '=':
-		case '"':
-		case '\\':
-		case '\r':
-		case '\n':
-			break;
-		default:
-			*b++ = *s;
-			break;
-		}
-		s++;
-	}
-	*b = 0;
-	return a;
-}
-#endif
-
 static void pair_ut64x(PJ *pj, const char *key, ut64 val) {
 	if (pj) {
 		pair_ut64 (pj, key, val);
@@ -1806,9 +1751,13 @@ static void set_bin_relocs(RelocInfo *ri, RBinReloc *reloc, ut64 addr, Sdb **db,
 					ut64 saddr = reloc->vaddr - ri->got_va;
 					int index = (saddr / 4) - 4;
 					ut64 naddr = r_bin_a2b (r->bin, ri->plt_va + (index * 12) + 0x20);
-					char *internal_reloc = r_str_newf ("rsym.%s", reloc_name);
-					(void)r_flag_set (r->flags, internal_reloc, naddr, bin_reloc_size (reloc));
-					free (internal_reloc);
+					if (naddr == UT64_MAX) {
+						R_LOG_DEBUG ("Cannot resolve reloc reference %s", reloc_name);
+					} else {
+						char *internal_reloc = r_str_newf ("rsym.%s", reloc_name);
+						(void)r_flag_set (r->flags, internal_reloc, naddr, bin_reloc_size (reloc));
+						free (internal_reloc);
+					}
 				}
 			}
 		}
@@ -1822,14 +1771,19 @@ static void set_bin_relocs(RelocInfo *ri, RBinReloc *reloc, ut64 addr, Sdb **db,
 		}
 	}
 	r_name_filter (flagname, 0);
-	RFlagItem *fi = r_flag_set (r->flags, flagname, addr, bin_reloc_size (reloc));
-	if (demname) {
-		char *realname = (r->bin->prefix)
-			? r_str_newf ("%s.reloc.%s", r->bin->prefix, demname)
-			: r_str_newf ("%s", demname);
-		r_flag_item_set_realname (fi, realname);
-		free (realname);
+	if (addr == UT64_MAX) {
+		R_LOG_DEBUG ("Cannot resolve reloc %s", demname);
+	} else {
+		RFlagItem *fi = r_flag_set (r->flags, flagname, addr, bin_reloc_size (reloc));
+		if (demname) {
+			char *realname = (r->bin->prefix)
+				? r_str_newf ("%s.reloc.%s", r->bin->prefix, demname)
+				: r_str_newf ("%s", demname);
+			r_flag_item_set_realname (fi, realname);
+			free (realname);
+		}
 	}
+
 	free (demname);
 }
 
@@ -1915,11 +1869,7 @@ static int bin_relocs(RCore *r, PJ *pj, int mode, int va) {
 		return false;
 	}
 	if (bin_cache) {
-#if USE_NEW_IO_CACHE_API
 		bool cache_is_empty = r_pvector_length (r->io->cache->vec) == 0;
-#else
-		bool cache_is_empty = r_pvector_length (&r->io->cache) == 0;
-#endif
 		if (cache_is_empty) {
 			r_config_set_b (r->config, "io.cache", false);
 		} else {
@@ -2018,6 +1968,11 @@ static int bin_relocs(RCore *r, PJ *pj, int mode, int va) {
 				free (relname);
 			}
 		} else if (IS_MODE_NORMAL (mode)) {
+			if (addr == UT64_MAX) {
+				R_LOG_DEBUG ("Cannot resolve address for %s", bin_reloc_type_name (reloc));
+				continue;
+			}
+
 			char *name = reloc->import
 				? strdup (reloc->import->name)
 					: reloc->symbol
@@ -2047,6 +2002,7 @@ static int bin_relocs(RCore *r, PJ *pj, int mode, int va) {
 			if (reloc->is_ifunc) {
 				r_strbuf_append (buf, " (ifunc)");
 			}
+
 			char *res = r_strbuf_drain (buf);
 			r_table_add_rowf (table, "XXss", addr, reloc->paddr,
 				bin_reloc_type_name (reloc), res);
@@ -2080,7 +2036,7 @@ static int bin_relocs(RCore *r, PJ *pj, int mode, int va) {
 }
 
 #define MYDB 1
-/* this is a VERY VERY VERY hacky and bad workaround that needs proper refactoring in Rbin to use Sdb */
+/* R2_590 - this is a VERY VERY VERY hacky and bad workaround that needs proper refactoring in Rbin to use Sdb */
 #if MYDB
 R_DEPRECATE static R_TH_LOCAL Sdb *mydb = NULL;
 R_DEPRECATE static R_TH_LOCAL RList *osymbols = NULL;
@@ -2592,13 +2548,17 @@ static int bin_symbols(RCore *r, PJ *pj, int mode, ut64 laddr, int va, ut64 at, 
 				char *fnp = (r->bin->prefix) ?
 					r_str_newf ("%s.%s", r->bin->prefix, fn):
 					strdup (r_str_get (fn));
-				RFlagItem *fi = r_flag_set (r->flags, fnp, addr, symbol->size);
-				if (fi) {
-					r_flag_item_set_realname (fi, n);
-					fi->demangled = (bool)(size_t)sn.demname;
+				if (addr == UT64_MAX) {
+					R_LOG_DEBUG ("Cannot resolve symbol address %s", n);
 				} else {
-					if (fn) {
-						R_LOG_WARN ("Can't find flag (%s)", fn);
+					RFlagItem *fi = r_flag_set (r->flags, fnp, addr, symbol->size);
+					if (fi) {
+						r_flag_item_set_realname (fi, n);
+						fi->demangled = (bool)(size_t)sn.demname;
+					} else {
+						if (fn) {
+							R_LOG_WARN ("Can't find flag (%s)", fn);
+						}
 					}
 				}
 				free (fnp);
@@ -3407,10 +3367,10 @@ static int bin_fields(RCore *r, PJ *pj, int mode, int va) {
 			}
 			char *o = r_core_cmd_strf (r, "pfj%c%s@0x%"PFMT64x,
 				field->format_named ? '.' :  ' ', field->format, field->vaddr);
-			if (o && *o) {
-				r_str_trim_tail(o);
+			if (R_STR_ISNOTEMPTY (o)) {
+				r_str_trim_tail (o);
 				pj_k (pj, "pf");
-				pj_j (pj, o);
+				pj_j (pj, o); // XXX  if json is invalid this may fuck the things
 			}
 			free (o);
 			pj_end (pj);

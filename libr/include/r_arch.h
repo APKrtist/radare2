@@ -6,6 +6,7 @@
 #include <r_util.h>
 #include <r_bin.h>
 #include <r_reg.h>
+#include <r_lib.h>
 
 // Rename to R_ARCH_VALTYPE_*
 typedef enum {
@@ -17,9 +18,9 @@ typedef enum {
 
 #if R2_590
 #define USE_REG_NAMES 1
-#define R_ARCH_INFO_MIN_OP_SIZE 0
-#define R_ARCH_INFO_MAX_OP_SIZE 1
-#define R_ARCH_INFO_INV_OP_SIZE 2
+#define R_ARCH_INFO_MINOP_SIZE 0
+#define R_ARCH_INFO_MAXOP_SIZE 1
+#define R_ARCH_INFO_INVOP_SIZE 2
 #define R_ARCH_INFO_ALIGN 4
 #define R_ARCH_INFO_DATA_ALIGN 8
 #define R_ARCH_INFO_DATA2_ALIGN 16
@@ -34,7 +35,6 @@ typedef enum {
 #define R_ANAL_ARCHINFO_DATA_ALIGN 8
 #endif
 
-
 // base + reg + regdelta * mul + delta
 typedef struct r_arch_value_t {
 	RArchValueType type;
@@ -45,18 +45,12 @@ typedef struct r_arch_value_t {
 	st64 delta; // numeric delta
 	st64 imm; // immediate value
 	int mul; // multiplier (reg*4+base)
-#if USE_REG_NAMES
-	const char * const seg;
-	const char * const reg;
-	const char * const regdelta;
-#else
-	// XXX can be invalidated if regprofile changes causing an UAF
-	RRegItem *seg; // segment selector register
-	RRegItem *reg; // register item reference
-	RRegItem *regdelta; // register index used
-#endif
+	const char *seg;
+	const char *reg;
+	const char *regdelta;
 } RArchValue;
 #include <r_anal/op.h>
+#include <r_esil.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,9 +95,7 @@ typedef struct r_arch_config_t {
 	int invhex;
 	int bitshift;
 	char *abi;
-#if R2_590
 	ut64 gp;
-#endif
 	R_REF_TYPE;
 } RArchConfig;
 
@@ -126,38 +118,34 @@ typedef enum {
 	R_ARCH_OP_MASK_ALL   = 1 | 2 | 4 | 8 | 16
 } RAnalOpMask;
 
-#if 0
-// XXX R2_590 - backward compatible, shouldnt be used
-#define R_ANAL_OP_MASK_BASIC 0, // Just fills basic op info , it's fast
-#define R_ANAL_OP_MASK_ESIL  1, // It fills RAnalop->esil info
-#define R_ANAL_OP_MASK_VAL   2, // It fills RAnalop->dst/src info
-#define R_ANAL_OP_MASK_HINT  4, // It calls r_anal_op_hint to override anal options
-#define R_ANAL_OP_MASK_OPEX  8, // It fills RAnalop->opex info
-#define R_ANAL_OP_MASK_DISASM 16, // It fills RAnalop->mnemonic // should be RAnalOp->disasm // only from r_core_anal_op()
-#define R_ANAL_OP_MASK_ALL   (1 | 2 | 4 | 8 | 16)
-#endif
-
 typedef struct r_arch_t {
 	RList *plugins;	       // all plugins
 	RBinBind binb; // required for java, dalvik, wasm, pickle and pyc plugin... pending refactor
+	struct r_esil_t *esil;
 	RNum *num; // XXX maybe not required
 	struct r_arch_session_t *session;
 	RArchConfig *cfg; // global / default config
 } RArch;
 
 typedef struct r_arch_session_t {
-#if R2_590
 	char *name; // used by .use to chk if it was set already
 	// TODO: name it "peer" instead of encoder. so the encoder can back reference the decoder
-	struct r_arch_session_t *encoder; // used for encoding when plugin->encode is not set
-#endif
 	struct r_arch_t *arch;
 	struct r_arch_plugin_t *plugin; // used for decoding
-	RArchConfig *config; // TODO remove arch->config!
-	void *data;
-	void *user;
+	struct r_arch_session_t *encoder; // used for encoding when plugin->encode is not set
+	RArchConfig *config; // TODO remove arch->config and keep archsession->config
+	void *data; // store plugin-specific data
+	void *user; // holds user pointer provided by user
 	R_REF_TYPE;
 } RArchSession;
+
+typedef enum {
+	R_ARCH_ESIL_INIT,
+	R_ARCH_ESIL_MAPS,
+	// R_ARCH_ESIL_EVAL,
+	R_ARCH_ESIL_RESET,
+	R_ARCH_ESIL_FINI,
+} RArchEsilAction;
 
 typedef ut32 RArchDecodeMask;
 typedef ut32 RArchEncodeMask; // syntax ?
@@ -172,15 +160,19 @@ typedef bool (*RArchPluginModifyCallback)(RArchSession *s, struct r_anal_op_t *o
 typedef RList *(*RArchPluginPreludesCallback)(RArchSession *s);
 typedef bool (*RArchPluginInitCallback)(RArchSession *s);
 typedef bool (*RArchPluginFiniCallback)(RArchSession *s);
+typedef bool (*RArchPluginEsilCallback)(RArchSession *s, RArchEsilAction action);
 
 // TODO: use `const char *const` instead of `char*`
 typedef struct r_arch_plugin_t {
+	RPluginMeta meta;
+#if 0
 	// RPluginMeta meta; //  = { .name = ... }
 	char *name;
 	char *desc;
 	char *author;
 	char *version;
 	char *license;
+#endif
 
 	// all const
 	char *arch;
@@ -197,10 +189,7 @@ typedef struct r_arch_plugin_t {
 	RArchPluginModifyCallback patch;
 	RArchPluginMnemonicsCallback mnemonics;
 	RArchPluginPreludesCallback preludes;
-//TODO: reenable this later? maybe it should be called reset() or setenv().. but esilinit/fini
-// 	seems to specific to esil and those functions may want to do moreo things like io stuff
-//	bool (*esil_init)(REsil *esil);
-//	void (*esil_fini)(REsil *esil);
+	RArchPluginEsilCallback esilcb;
 } RArchPlugin;
 
 // decoder.c
@@ -232,11 +221,6 @@ R_API bool r_arch_add(RArch *arch, RArchPlugin *ap);
 R_API bool r_arch_del(RArch *arch, const char *name);
 R_API void r_arch_free(RArch *arch);
 
-// R2_590 - deprecate
-R_API bool r_arch_set_bits(RArch *arch, ut32 bits);
-R_API bool r_arch_set_endian(RArch *arch, ut32 endian);
-R_API bool r_arch_set_arch(RArch *arch, char *archname);
-
 // aconfig.c
 R_API void r_arch_config_use(RArchConfig *config, R_NULLABLE const char *arch);
 R_API void r_arch_config_set_cpu(RArchConfig *config, R_NULLABLE const char *cpu);
@@ -250,9 +234,7 @@ R_API void r_arch_config_free(RArchConfig *);
 #define RAnalValue RArchValue
 R_API RArchValue *r_arch_value_new(void);
 
-#if R2_590
 R_API RArchValue *r_arch_value_new_reg(const char * const regname);
-#endif
 #if 0
 // switchop
 R_API RArchSwitchOp *r_arch_switch_op_new(ut64 addr, ut64 min_val, ut64 max_val, ut64 def_val);
@@ -269,6 +251,13 @@ R_API RAnalOp *r_arch_op_new(void);
 R_API void r_arch_op_init(RAnalOp *op);
 R_API void r_arch_op_fini(RAnalOp *op);
 R_API void r_arch_op_free(void *_op);
+#endif
+
+#if 1
+// R2_590 Deprecate!
+R_API bool r_arch_set_endian(RArch *arch, ut32 endian);
+R_API bool r_arch_set_bits(RArch *arch, ut32 bits);
+R_API bool r_arch_set_arch(RArch *arch, char *archname);
 #endif
 
 R_API int r_arch_optype_from_string(const char *type);

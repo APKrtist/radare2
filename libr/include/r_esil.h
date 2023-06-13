@@ -29,12 +29,9 @@ enum {
 	R_ESIL_OP_TYPE_MEM_WRITE = 0x8,
 	R_ESIL_OP_TYPE_REG_WRITE = 0x10,
 	R_ESIL_OP_TYPE_MATH = 0x20,
-	R_ESIL_OP_TYPE_CUSTOM = 0x40
-#if R2_590
-	,
+	R_ESIL_OP_TYPE_CUSTOM = 0x40,
 	R_ESIL_OP_TYPE_FLAG = 0x80,
 	R_ESIL_OP_TYPE_TRAP = 0x100 // syscall, interrupts, breakpoints, ...
-#endif
 };
 
 // this is 80-bit offsets so we can address every piece of esil in an instruction
@@ -106,13 +103,11 @@ typedef struct r_esil_callbacks_t {
 	bool (*reg_write)(ESIL *esil, const char *name, ut64 val);
 } REsilCallbacks;
 
-#if R2_590
 typedef struct r_esil_options_t {
 	int nowrite;
 	int iotrap;
 	int exectrap;
 } REsilOptions;
-#endif
 
 typedef struct r_esil_t {
 	struct r_anal_t *anal; // XXX maybe just use arch?
@@ -174,6 +169,9 @@ typedef struct r_esil_t {
 	void *user;
 	int stack_fd;	// ahem, let's not do this
 	bool in_cmd_step;
+#if 0
+	bool trace_enabled;
+#endif
 } REsil;
 
 enum {
@@ -337,7 +335,7 @@ R_API void r_esil_stats(REsil *esil, int enable);
 /* trace */
 R_API REsilTrace *r_esil_trace_new(REsil *esil);
 R_API void r_esil_trace_free(REsilTrace *trace);
-R_API void r_esil_trace_op(REsil *esil, RAnalOp *op);
+R_API void r_esil_trace_op(REsil *esil, struct r_anal_op_t *op);
 R_API void r_esil_trace_list(REsil *esil);
 R_API void r_esil_trace_show(REsil *esil, int idx);
 R_API void r_esil_trace_restore(REsil *esil, int idx);

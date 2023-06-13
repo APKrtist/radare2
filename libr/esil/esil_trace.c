@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2015-2022 - pancake, rkx1209 */
+/* radare - LGPL - Copyright 2015-2023 - pancake, rkx1209 */
 
 #include <r_anal.h>
 
@@ -9,8 +9,8 @@
 #define CMP_REG_CHANGE(x, y) ((x) - ((REsilRegChange *)y)->idx)
 #define CMP_MEM_CHANGE(x, y) ((x) - ((REsilMemChange *)y)->idx)
 
-static int ocbs_set = false;
-static REsilCallbacks ocbs = {0};
+static R_TH_LOCAL int ocbs_set = false;
+static R_TH_LOCAL REsilCallbacks ocbs = {0};
 
 static void htup_vector_free(HtUPKv *kv) {
 	if (kv) {
@@ -21,7 +21,7 @@ static void htup_vector_free(HtUPKv *kv) {
 R_API REsilTrace *r_esil_trace_new(REsil *esil) {
 	r_return_val_if_fail (esil, NULL);
 	if (!esil->stack_addr || !esil->stack_size) {
-		R_LOG_ERROR ("Run `aeim` to initialize a stack for the ESIL vm");
+		// R_LOG_ERROR ("Run `aeim` to initialize a stack for the ESIL vm");
 		return NULL;
 	}
 	size_t i;
@@ -78,7 +78,9 @@ R_API void r_esil_trace_free(REsilTrace *trace) {
 			r_reg_arena_free (trace->arena[i]);
 		}
 		free (trace->stack_data);
+		// eprintf ("sdb free %p%c", trace->db, 10);
 		sdb_free (trace->db);
+		trace->db = NULL;
 		R_FREE (trace);
 	}
 }
@@ -119,7 +121,7 @@ static bool trace_hook_reg_read(REsil *esil, const char *name, ut64 *res, int *s
 	r_strf_buffer (128);
 	bool ret = false;
 	if (*name == '0') {
-		//eprintf ("Register not found in profile\n");
+		// eprintf ("Register not found in profile\n");
 		return false;
 	}
 	if (ocbs.hook_reg_read) {
@@ -133,9 +135,10 @@ static bool trace_hook_reg_read(REsil *esil, const char *name, ut64 *res, int *s
 	}
 	if (ret) {
 		ut64 val = *res;
-		//eprintf ("[ESIL] REG READ %s 0x%08"PFMT64x"\n", name, val);
-		sdb_array_add (DB, KEY ("reg.read"), name, 0);
+		// eprintf ("[ESIL] REG READ %s 0x%08"PFMT64x"\n", name, val);
+		sdb_array_add (DB, KEY ("reg.read"), name, 0); // XXX this is very slow and memory hungry
 		sdb_num_set (DB, KEYREG ("reg.read", name), val, 0);
+		// eprintf ("select it %p%c", DB, 10);
 	}
 	return ret;
 }
@@ -143,7 +146,7 @@ static bool trace_hook_reg_read(REsil *esil, const char *name, ut64 *res, int *s
 static bool trace_hook_reg_write(REsil *esil, const char *name, ut64 *val) {
 	r_strf_buffer (128);
 	bool ret = false;
-	//eprintf ("[ESIL] REG WRITE %s 0x%08"PFMT64x"\n", name, *val);
+	// eprintf ("[ESIL] REG WRITE %s 0x%08"PFMT64x"\n", name, *val);
 	RRegItem *ri = r_reg_get (esil->anal->reg, name, -1);
 	if (ri) {
 		sdb_array_add (DB, KEY ("reg.write"), name, 0);
@@ -185,13 +188,12 @@ static bool trace_hook_mem_read(REsil *esil, ut64 addr, ut8 *buf, int len) {
 static bool trace_hook_mem_write(REsil *esil, ut64 addr, const ut8 *buf, int len) {
 	size_t i;
 	int ret = 0;
-	char *hexbuf = malloc ((1 + len) * 3);
+	char *hexbuf = r_hex_bin2strdup (buf, len);
 	if (!hexbuf) {
 		return false;
 	}
 	r_strf_buffer (128);
 	sdb_array_add_num (DB, KEY ("mem.write"), addr, 0);
-	r_hex_bin2str (buf, len, hexbuf);
 	sdb_set (DB, KEYAT ("mem.write.data", addr), hexbuf, 0);
 	//eprintf ("[ESIL] MEM WRITE 0x%08"PFMT64x" %s\n", addr, hexbuf);
 	free (hexbuf);
@@ -205,32 +207,33 @@ static bool trace_hook_mem_write(REsil *esil, ut64 addr, const ut8 *buf, int len
 		ret = ocbs.hook_mem_write (esil, addr, buf, len);
 		esil->cb = cbs;
 	}
-	return ret;
+	return ret != 0;
 }
 
 R_API void r_esil_trace_op(REsil *esil, RAnalOp *op) {
 	r_return_if_fail (esil && op);
 	r_strf_buffer (128);
 	const char *expr = r_strbuf_get (&op->esil);
+	if (!esil->trace) {
+		esil->trace = r_esil_trace_new (esil);
+		if (!esil->trace) {
+			R_LOG_ERROR ("Cannot initialize the esil trace class");
+			return;
+		}
+	}
 	if (R_STR_ISEMPTY (expr)) {
 		// do nothing
 		return;
 	}
-	if (!esil->trace) {
-		esil->trace = r_esil_trace_new (esil);
-		if (!esil->trace) {
-			return;
-		}
-	}
 	/* restore from trace when `idx` is not at the end */
 	if (esil->trace->idx != esil->trace->end_idx) {
+		// eprintf ("j %d\n", esil->trace->idx);
 		r_esil_trace_restore (esil, esil->trace->idx + 1);
 		return;
 	}
 	/* save old callbacks */
-	int esil_verbose = esil->verbose;
 	if (ocbs_set) {
-		eprintf ("r_esil_trace_op: Cannot call recursively\n");
+		R_LOG_WARN ("r_esil_trace_op: Cannot call recursively");
 	}
 	ocbs = esil->cb;
 	ocbs_set = true;
@@ -244,18 +247,19 @@ R_API void r_esil_trace_op(REsil *esil, RAnalOp *op) {
 	//eprintf ("[ESIL] OPCODE %s\n", op->mnemonic);
 	//eprintf ("[ESIL] EXPR = %s\n", expr);
 	/* set hooks */
-	esil->verbose = 0;
 	esil->cb.hook_reg_read = trace_hook_reg_read;
 	esil->cb.hook_reg_write = trace_hook_reg_write;
 	esil->cb.hook_mem_read = trace_hook_mem_read;
 	esil->cb.hook_mem_write = trace_hook_mem_write;
 	/* evaluate esil expression */
+	const int esil_verbose = esil->verbose;
+	esil->verbose = 0; // disable verbose logs when tracing
 	r_esil_parse (esil, expr);
 	r_esil_stack_free (esil);
+	esil->verbose = esil_verbose;
 	/* restore hooks */
 	esil->cb = ocbs;
 	ocbs_set = false;
-	esil->verbose = esil_verbose;
 	/* increment idx */
 	esil->trace->idx++;
 	esil->trace->end_idx++;
@@ -281,7 +285,9 @@ static bool restore_register(REsil *esil, RRegItem *ri, int idx) {
 		r_vector_upper_bound (vreg, idx, index, CMP_REG_CHANGE);
 		if (index > 0 && index <= vreg->len) {
 			REsilRegChange *c = r_vector_index_ptr (vreg, index - 1);
-			r_reg_set_value (esil->anal->reg, ri, c->data);
+			if (c) {
+				r_reg_set_value (esil->anal->reg, ri, c->data);
+			}
 		}
 	}
 	return true;
@@ -320,10 +326,10 @@ static int cmp_strings_by_leading_number(void *data1, void *data2) {
 	int i = 0;
 	int j = 0;
 	int k = 0;
-	while (a[i] >= '0' && a[i] <= '9') {
+	while (isdigit (a[i])) {
 		i++;
 	}
-	while (b[j] >= '0' && b[j] <= '9') {
+	while (isdigit (b[j])) {
 		j++;
 	}
 	if (!i || !j) {
@@ -381,62 +387,55 @@ R_API void r_esil_trace_list(REsil *esil) {
 R_API void r_esil_trace_show(REsil *esil, int idx) {
 	r_strf_buffer (128);
 	PrintfCallback p = esil->anal->cb_printf;
-	const char *str2;
-	const char *str;
 	if (!esil->trace) {
 		return;
 	}
 	int trace_idx = esil->trace->idx;
 	esil->trace->idx = idx;
 
-	str2 = sdb_const_get (DB, KEY ("addr"), 0);
+	const char *str2 = sdb_const_get (DB, KEY ("addr"), 0);
 	if (!str2) {
 		return;
 	}
 	p ("ar PC = %s\n", str2);
 	/* registers */
-	str = sdb_const_get (DB, KEY ("reg.read"), 0);
-	if (str) {
+	const char *str = sdb_const_get (DB, KEY ("reg.read"), 0);
+	if (R_STR_ISNOTEMPTY (str)) {
 		char regname[32];
 		const char *next, *ptr = str;
-		if (ptr && *ptr) {
-			do {
-				next = sdb_const_anext (ptr);
-				int len = next? (int)(size_t)(next - ptr) - 1 : strlen (ptr);
-				if (len < sizeof (regname)) {
-					memcpy (regname, ptr, len);
-					regname[len] = 0;
-					str2 = sdb_const_get (DB, KEYREG ("reg.read", regname), 0);
-					p ("ar %s = %s\n", regname, str2);
-				} else {
-					R_LOG_ERROR ("Invalid entry in reg.read");
-				}
-				ptr = next;
-			} while (next);
-		}
+		do {
+			next = sdb_const_anext (ptr);
+			int len = next? (int)(size_t)(next - ptr) - 1 : strlen (ptr);
+			if (len < sizeof (regname)) {
+				memcpy (regname, ptr, len);
+				regname[len] = 0;
+				str2 = sdb_const_get (DB, KEYREG ("reg.read", regname), 0);
+				p ("ar %s = %s\n", regname, str2);
+			} else {
+				R_LOG_ERROR ("Invalid entry in reg.read");
+			}
+			ptr = next;
+		} while (next);
 	}
 	/* memory */
 	str = sdb_const_get (DB, KEY ("mem.read"), 0);
-	if (str) {
+	if (R_STR_ISNOTEMPTY (str)) {
 		char addr[64];
 		const char *next, *ptr = str;
-		if (ptr && *ptr) {
-			do {
-				next = sdb_const_anext (ptr);
-				int len = next? (int)(size_t)(next-ptr)-1 : strlen (ptr);
-				if (len < sizeof (addr)) {
-					memcpy (addr, ptr, len);
-					addr[len] = 0;
-					str2 = sdb_const_get (DB, KEYAT ("mem.read.data",
-						r_num_get (NULL, addr)), 0);
-					p ("wx %s @ %s\n", str2, addr);
-				} else {
-					R_LOG_ERROR ("Invalid entry in reg.read");
-				}
-				ptr = next;
-			} while (next);
-		}
+		do {
+			next = sdb_const_anext (ptr);
+			int len = next? (int)(size_t)(next - ptr) - 1 : strlen (ptr);
+			if (len < sizeof (addr)) {
+				memcpy (addr, ptr, len);
+				addr[len] = 0;
+				str2 = sdb_const_get (DB, KEYAT ("mem.read.data",
+					r_num_get (NULL, addr)), 0);
+				p ("wx %s @ %s\n", str2, addr);
+			} else {
+				R_LOG_ERROR ("Invalid entry in reg.read");
+			}
+			ptr = next;
+		} while (next);
 	}
-
 	esil->trace->idx = trace_idx;
 }
